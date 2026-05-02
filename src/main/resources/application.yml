@@ -40,7 +40,7 @@ app:
     account-id: d54479fa-bea8-4762-ba96-6ec8b1eaea26
     private-key-path: classpath:workkg.pem
     base-url: https://api.acquiring.averspay.kg
-    webhook-url: /api/payment/webhook
+    webhook-url: https://greenecomall.up.railway.app/api/payment/webhook
 
 sms:
   smspro:
