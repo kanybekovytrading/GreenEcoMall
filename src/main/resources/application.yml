@@ -26,8 +26,6 @@ jwt:
 
 app:
   base-url: ${APP_BASE_URL:https://greenecomall.kg}
-  cors:
-    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173,https://greenecomall.kg}
   admin:
     phone: ${ADMIN_PHONE:+996700000000}
     password: ${ADMIN_PASSWORD:admin123}
