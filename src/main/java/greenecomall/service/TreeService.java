@@ -563,7 +563,20 @@ public class TreeService {
                 treePositionRepo.findByParentAndLevelAndStage(c.getUser(), level, stage)
                         .stream().anyMatch(TreePosition::getIsAccelerator));
 
-        TreeNodeResponse rootNode = buildNode(user, level, stage, 3); // depth 3 = root + 2 tiers
+        // Stage 1 Level 1: infinite depth (BFS tree grows without limit)
+        // Stage 2 while still on Stage 2: only 2 direct partners visible
+        // Everything else: 6 people max (root + 2 tiers)
+        int depth;
+        boolean isCurrentStage = user.getCurrentLevel() == level && user.getCurrentStage() == stage;
+        if (stage == 1 && level == 1) {
+            depth = 20;
+        } else if ((stage == 2 || stage == 4) && isCurrentStage) {
+            depth = 2; // ожидаем только 2 партнёров
+        } else {
+            depth = 3; // история или этапы 3 — показываем 6
+        }
+
+        TreeNodeResponse rootNode = buildNode(user, level, stage, depth);
 
         return TreeResponse.builder()
                 .root(rootNode)

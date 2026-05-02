@@ -42,12 +42,27 @@ public class BonusController {
             description = """
                     Возвращает бонусы с пагинацией. Можно фильтровать по типу и/или статусу.
 
-                    Каждая запись содержит `fromUserName` — имя участника, за которого начислен бонус.
+                    **Типы бонусов:**
+                    - `STAGE` — бонус за завершение этапа (начисляется завершителю)
+                    - `REFERRAL_DIRECT` — 1 250 сом за каждого участника из матрицы, реферером которого ты являешься (начисляется при завершении Этапа 1 владельцем матрицы)
+                    - `DIVIDEND` — дивиденды акционеров (Уровень 4, Этап 4)
+
+                    **Таблица бонусов за этап:**
+
+                    | Уровень | Этап 1 | Этап 2 | Этап 3 | Этап 4 |
+                    |---------|--------|--------|--------|--------|
+                    | 1 | 5 000 KGS | — | 25 000 KGS | — |
+                    | 2 | 11 000 KGS | — | 100 000 KGS | — |
+                    | 3 | 44 000 KGS | 44 000 KGS | 12 000 USD | — |
+                    | 4 | 220 000 KGS | 220 000 KGS | 25 000 USD | 80 000 USD |
+
+                    Поле `currency` в каждой записи: `KGS` или `USD`.
+                    USD-бонусы не прибавляются к балансу в сомах.
                     """)
     @GetMapping("/bonuses")
     public ResponseEntity<ApiResponse<Page<BonusResponse>>> getBonuses(
             @AuthenticationPrincipal User user,
-            @Parameter(description = "Тип: REFERRAL_DIRECT | REFERRAL_INDIRECT | STAGE | DIVIDEND")
+            @Parameter(description = "Тип: REFERRAL_DIRECT | STAGE | DIVIDEND")
             @RequestParam(required = false) BonusType type,
             @Parameter(description = "Статус: PENDING | CONFIRMED | PAID")
             @RequestParam(required = false) BonusStatus status,
