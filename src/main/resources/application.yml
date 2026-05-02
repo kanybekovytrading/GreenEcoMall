@@ -21,11 +21,13 @@ spring:
 
 jwt:
   secret: greenecomall-super-secret-key-must-be-at-least-256-bits-long-for-hs256
-  access-token-expiration: 900000       # 15 minutes
+  access-token-expiration: 9000000       # 15 minutes
   refresh-token-expiration: 2592000000  # 30 days
 
 app:
   base-url: ${APP_BASE_URL:https://greenecomall.kg}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173,https://greenecomall.kg}
   admin:
     phone: ${ADMIN_PHONE:+996700000000}
     password: ${ADMIN_PASSWORD:admin123}
