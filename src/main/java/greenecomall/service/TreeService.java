@@ -46,19 +46,37 @@ public class TreeService {
     public void placeNewUser(User inviter, User newUser) {
         int level = inviter.getCurrentLevel();
         User directParent = bfsPlace(inviter, newUser, level, 1);
-        checkStage1Completion(inviter, level);
+
+        // Check Stage 1 completion for the placement node and up to 2 ancestors —
+        // covers: directParent's own matrix (newUser = tier 1) and
+        // directParent's parent's matrix (newUser = tier 2).
+        checkStage1UpTheChain(directParent != null ? directParent : inviter, level);
 
         String msg = newUser.getFirstName() + " " + newUser.getLastName() + " присоединился к вашей команде";
 
         // Always notify the tree root (inviter)
         notificationService.send(inviter, NotificationType.NEW_MEMBER, "Новый участник", msg);
 
-        // Also notify the direct parent if the user landed on tier 2 (parent ≠ inviter)
+        // Also notify the direct parent if different from inviter
         if (directParent != null && !directParent.getId().equals(inviter.getId())) {
             notificationService.send(directParent, NotificationType.NEW_MEMBER,
                     "Новый участник в вашей ветке",
                     newUser.getFirstName() + " " + newUser.getLastName() + " занял позицию под вами");
         }
+    }
+
+    /**
+     * Проверяет завершение Этапа 1 для node и его родителя в дереве.
+     * Это покрывает случаи когда новый юзер попал на тир 3+ от изначального inviter-а:
+     * он является тир-1 для node и тир-2 для node's parent.
+     */
+    private void checkStage1UpTheChain(User node, int level) {
+        checkStage1Completion(node, level);
+        treePositionRepo.findByUserAndLevelAndStage(node, level, 1).ifPresent(pos -> {
+            if (pos.getParent() != null) {
+                checkStage1Completion(pos.getParent(), level);
+            }
+        });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -244,16 +262,20 @@ public class TreeService {
      * Accelerators count as real positions per the business rules.
      */
     private void checkStage1Completion(User root, int level) {
-        int tier1 = treePositionRepo.countByParentAndLevelAndStage(root, level, 1);
-        if (tier1 < 2) return; // not even both direct slots filled
+        // Reload to get fresh stage/level state and avoid double-triggering
+        User fresh = userRepository.findById(root.getId()).orElse(root);
+        if (fresh.getCurrentLevel() != level || fresh.getCurrentStage() != 1) return;
 
-        List<TreePosition> directChildren = treePositionRepo.findByParentAndLevelAndStage(root, level, 1);
+        int tier1 = treePositionRepo.countByParentAndLevelAndStage(fresh, level, 1);
+        if (tier1 < 2) return;
+
+        List<TreePosition> directChildren = treePositionRepo.findByParentAndLevelAndStage(fresh, level, 1);
         int tier2 = directChildren.stream()
                 .mapToInt(c -> treePositionRepo.countByParentAndLevelAndStage(c.getUser(), level, 1))
                 .sum();
 
         if (tier1 + tier2 >= 6) {
-            onStage1Completed(root, level);
+            onStage1Completed(fresh, level);
         }
     }
 

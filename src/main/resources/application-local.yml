@@ -1,0 +1,61 @@
+spring:
+  application:
+    name: GreenEcoMall
+  datasource:
+    url: jdbc:postgresql://trolley.proxy.rlwy.net:13171/railway
+    username: postgres
+    password: jFmtOmZaGdxwbeHXzAbZeNbqsljtZIJf
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+  flyway:
+    enabled: false
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+jwt:
+  secret: greenecomall-super-secret-key-must-be-at-least-256-bits-long-for-hs256
+  access-token-expiration: 900000       # 15 minutes
+  refresh-token-expiration: 2592000000  # 30 days
+
+app:
+  base-url: ${APP_BASE_URL:https://greenecomall.kg}
+  admin:
+    phone: ${ADMIN_PHONE:+996700000000}
+    password: ${ADMIN_PASSWORD:admin123}
+    referral-code: ${ADMIN_REFERRAL:GEMADMIN}
+  otp:
+    expiration-minutes: 5
+    max-requests-per-hour: 5
+  payment:
+    qr-expiration-minutes: 30
+  finik:
+    api-key: LOlnU70w7LtRpBZ5HAxLaVatjIXQLGS9xmeSmWM4
+    account-id: d54479fa-bea8-4762-ba96-6ec8b1eaea26
+    private-key-path: classpath:workkg.pem
+    base-url: https://api.acquiring.averspay.kg
+    webhook-url: https://greenecomall.up.railway.app/api/payment/webhook
+
+sms:
+  smspro:
+    enabled: true
+    url: ${SMSPRO_URL:https://smspro.nikita.kg/api/message}
+    login: Cholpon123456
+    password: 6EX5vJf8
+    sender: BilgirimKG
+
+
+logging:
+  level:
+    greenecomall: INFO
+    org.springframework.web: INFO
+    org.hibernate.SQL: ERROR
+
+server:
+  port: 8080
