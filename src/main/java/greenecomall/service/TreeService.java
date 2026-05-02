@@ -99,6 +99,9 @@ public class TreeService {
             bonusService.createMemberReferralBonuses(level, members);
         }
 
+        // Ускоритель выполнил свою задачу — удаляем его из матрицы
+        removeAcceleratorsUnder(user, level);
+
         user.setCurrentStage(2);
         userRepository.save(user);
 
