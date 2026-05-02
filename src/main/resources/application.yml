@@ -2,9 +2,9 @@ spring:
   application:
     name: GreenEcoMall
   datasource:
-    url: jdbc:postgresql://localhost:5432/synamyk
+    url: jdbc:postgresql://postgres.railway.internal:5432/railway
     username: postgres
-    password: 1111
+    password: jFmtOmZaGdxwbeHXzAbZeNbqsljtZIJf
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -36,13 +36,11 @@ app:
   payment:
     qr-expiration-minutes: 30
   finik:
-    api-key: ${FINIK_API_KEY:JtsoRKA2il3kCGeNREQMNgPbCpjcP4a2PDlfLUV3}
-    account-id: ${FINIK_ACCOUNT_ID:9391947c-fd6e-4aae-81b2-da794d0d1e88}
-    private-key-path: classpath:finik_private.pem
+    api-key: LOlnU70w7LtRpBZ5HAxLaVatjIXQLGS9xmeSmWM4
+    account-id: d54479fa-bea8-4762-ba96-6ec8b1eaea26
+    private-key-path: classpath:workkg.pem
     base-url: https://api.acquiring.averspay.kg
-    merchant-category-code: "0742"
-    qr-name-en: "GreenEcoMall"
-    webhook-url: ${APP_BASE_URL:https://greenecomall.kg}/api/payment/webhook
+    webhook-url: /api/payment/webhook
 
 sms:
   smspro:
