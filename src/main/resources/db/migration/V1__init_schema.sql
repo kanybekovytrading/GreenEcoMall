@@ -105,13 +105,3 @@ CREATE TABLE otp_codes (
 
 CREATE INDEX idx_otp_phone ON otp_codes(phone);
 
-CREATE TABLE products (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id),
-    level INT NOT NULL,
-    description TEXT,
-    value_som DECIMAL(14, 2) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-    issued_at TIMESTAMP,
-    created_at TIMESTAMP NOT NULL DEFAULT NOW()
-);

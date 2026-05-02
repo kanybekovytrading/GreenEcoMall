@@ -1,6 +1,7 @@
 package greenecomall.service;
 
 import greenecomall.dto.request.*;
+import greenecomall.dto.response.InviterResponse;
 import greenecomall.dto.response.LoginResponse;
 import greenecomall.dto.response.RegisterResponse;
 import greenecomall.entity.OtpCode;
@@ -23,7 +24,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
-import java.util.Random;
 
 @Service
 @RequiredArgsConstructor
@@ -35,37 +35,27 @@ public class AuthService {
     private final PaymentRepository paymentRepository;
     private final JwtUtil jwtUtil;
     private final PasswordEncoder passwordEncoder;
-
-    @Value("${app.otp.expiration-minutes}")
-    private int otpExpirationMinutes;
-
-    @Value("${app.otp.max-requests-per-hour}")
-    private int maxOtpRequestsPerHour;
+    private final SmsService smsService;
 
     private static final String REFERRAL_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     private static final BigDecimal ENTRY_FEE = new BigDecimal("10000");
 
+    @org.springframework.beans.factory.annotation.Value("${app.admin.referral-code:GEMADMIN}")
+    private String adminReferralCode;
+
+    @org.springframework.beans.factory.annotation.Value("${app.admin.phone:+996700000000}")
+    private String adminPhone;
+
     @Transactional
-    public void sendOtp(String phone, String clientIp) {
-        long count = otpCodeRepository.countByPhoneAndCreatedAtAfter(phone, LocalDateTime.now().minusHours(1));
-        if (count >= maxOtpRequestsPerHour) {
-            throw BusinessException.of(ErrorCode.TOO_MANY_OTP_REQUESTS);
-        }
-
-        String code = String.format("%06d", new Random().nextInt(999999));
-        otpCodeRepository.save(OtpCode.builder()
-                .phone(phone)
-                .code(code)
-                .expiresAt(LocalDateTime.now().plusMinutes(otpExpirationMinutes))
-                .build());
-
-        log.info("[OTP] Phone: {} Code: {}", phone, code);
+    public LocalDateTime sendOtp(String phone, String clientIp) {
+        return smsService.sendOtp(phone);
     }
 
     @Transactional
     public void verifyOtp(String phone, String code) {
+        String formatted = smsService.formatPhone(phone);
         OtpCode otp = otpCodeRepository
-                .findFirstByPhoneAndIsUsedFalseOrderByCreatedAtDesc(phone)
+                .findFirstByPhoneAndIsUsedFalseOrderByCreatedAtDesc(formatted)
                 .orElseThrow(() -> BusinessException.of(ErrorCode.INVALID_OTP));
 
         if (otp.getExpiresAt().isBefore(LocalDateTime.now()) || !otp.getCode().equals(code)) {
@@ -77,11 +67,17 @@ public class AuthService {
 
     @Transactional
     public RegisterResponse register(RegisterRequest req) {
-        boolean phoneVerified = otpCodeRepository.existsByPhoneAndIsUsedTrueAndCreatedAtAfter(
-                req.phone(), LocalDateTime.now().minusHours(1));
-        if (!phoneVerified) {
-            throw BusinessException.of(ErrorCode.PHONE_NOT_VERIFIED);
-        }
+        return registerInternal(req, true);
+    }
+
+    @Transactional
+    public RegisterResponse registerByAdmin(RegisterRequest req) {
+        return registerInternal(req, false);
+    }
+
+    private RegisterResponse registerInternal(RegisterRequest req, boolean requireOtp) {
+        // requireOtp parameter kept for admin flow but normal registration no longer
+        // requires prior OTP — phone is verified in steps 2-3 after account creation
 
         if (userRepository.existsByPhone(req.phone())) {
             throw BusinessException.of(ErrorCode.PHONE_ALREADY_EXISTS);
@@ -117,7 +113,12 @@ public class AuthService {
                 .build();
         payment = paymentRepository.save(payment);
 
-        return new RegisterResponse(user.getId(), payment.getId());
+        return new RegisterResponse(
+                user.getId(),
+                payment.getId(),
+                jwtUtil.generateAccessToken(user.getId(), user.getRole()),
+                jwtUtil.generateRefreshToken(user.getId())
+        );
     }
 
     public LoginResponse login(LoginRequest req) {
@@ -136,10 +137,13 @@ public class AuthService {
             Payment payment = paymentRepository
                     .findFirstByUserAndTypeOrderByCreatedAtDesc(user, PaymentType.ENTRY_FEE)
                     .orElse(null);
+            // Выдаём токен даже для PENDING — нужен для вызова /api/payment/create-qr
             return LoginResponse.builder()
                     .needsPayment(true)
                     .paymentId(payment != null ? payment.getId() : null)
                     .userId(user.getId())
+                    .accessToken(jwtUtil.generateAccessToken(user.getId(), user.getRole()))
+                    .refreshToken(jwtUtil.generateRefreshToken(user.getId()))
                     .build();
         }
 
@@ -167,12 +171,39 @@ public class AuthService {
                 .build();
     }
 
+    public java.util.Map<String, String> getPlatformReferralCode() {
+        // Return the admin's referral code so new users can join without a personal invite
+        User admin = userRepository.findByPhone(adminPhone)
+                .orElseGet(() -> userRepository.findByReferralCode(adminReferralCode).orElse(null));
+        String code = (admin != null) ? admin.getReferralCode() : adminReferralCode;
+        return java.util.Map.of(
+                "referralCode", code,
+                "note", "Используй этот код для регистрации если у тебя нет реферальной ссылки"
+        );
+    }
+
+    public InviterResponse getInviterInfo(String referralCode) {
+        User inviter = userRepository.findByReferralCode(referralCode)
+                .orElseThrow(() -> BusinessException.of(ErrorCode.INVALID_REFERRAL_CODE));
+        String firstName = inviter.getFirstName();
+        String lastName = inviter.getLastName();
+        String initials = String.valueOf(firstName.charAt(0)).toUpperCase()
+                + String.valueOf(lastName.charAt(0)).toUpperCase();
+        return InviterResponse.builder()
+                .name(firstName + " " + lastName)
+                .initials(initials)
+                .currentLevel(inviter.getCurrentLevel())
+                .currentStage(inviter.getCurrentStage())
+                .referralCode(inviter.getReferralCode())
+                .build();
+    }
+
     private String generateUniqueReferralCode() {
         SecureRandom rng = new SecureRandom();
         String code;
         do {
-            StringBuilder sb = new StringBuilder(8);
-            for (int i = 0; i < 8; i++) {
+            StringBuilder sb = new StringBuilder(14);
+            for (int i = 0; i < 14; i++) {
                 sb.append(REFERRAL_CHARS.charAt(rng.nextInt(REFERRAL_CHARS.length())));
             }
             code = sb.toString();

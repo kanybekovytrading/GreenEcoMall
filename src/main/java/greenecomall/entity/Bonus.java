@@ -51,6 +51,10 @@ public class Bonus {
 
     private String description;
 
+    @Column(length = 3)
+    @Builder.Default
+    private String currency = "KGS";
+
     private LocalDateTime confirmedAt;
 
     @CreationTimestamp

@@ -3,6 +3,7 @@ package greenecomall.service;
 import greenecomall.entity.User;
 import greenecomall.entity.Withdrawal;
 import greenecomall.enums.NotificationType;
+import greenecomall.enums.WithdrawalMethod;
 import greenecomall.enums.WithdrawalStatus;
 import greenecomall.exception.BusinessException;
 import greenecomall.exception.ErrorCode;
@@ -29,7 +30,8 @@ public class WithdrawalService {
     private static final BigDecimal MIN_WITHDRAWAL = new BigDecimal("1000");
 
     @Transactional
-    public Withdrawal createWithdrawal(User user, BigDecimal amount) {
+    public Withdrawal createWithdrawal(User user, BigDecimal amount,
+                                       WithdrawalMethod method, String requisite, String bankName) {
         if (amount.compareTo(MIN_WITHDRAWAL) < 0) {
             throw BusinessException.of(ErrorCode.WITHDRAWAL_MIN_AMOUNT);
         }
@@ -39,12 +41,20 @@ public class WithdrawalService {
             throw BusinessException.of(ErrorCode.INSUFFICIENT_BALANCE);
         }
 
+        // Auto-save Finik phone to profile for quick reuse
+        if (method == WithdrawalMethod.FINIK && locked.getFinikPhone() == null) {
+            locked.setFinikPhone(requisite);
+        }
+
         locked.setBalance(locked.getBalance().subtract(amount));
         userRepository.save(locked);
 
         return withdrawalRepository.save(Withdrawal.builder()
                 .user(locked)
                 .amount(amount)
+                .method(method)
+                .requisite(requisite)
+                .bankName(bankName)
                 .status(WithdrawalStatus.PENDING)
                 .build());
     }

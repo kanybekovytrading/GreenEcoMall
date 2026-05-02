@@ -19,6 +19,6 @@ public record RegisterRequest(
         String password,
 
         @NotBlank
-        @Size(min = 8, max = 8, message = "Реферальный код 8 символов")
+        @Size(min = 8, max = 14, message = "Реферальный код от 8 до 14 символов")
         String referralCode
 ) {}

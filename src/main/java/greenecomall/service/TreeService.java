@@ -1,5 +1,8 @@
 package greenecomall.service;
 
+import greenecomall.dto.response.BranchStatsResponse;
+import greenecomall.dto.response.TreeNodeResponse;
+import greenecomall.dto.response.TreeResponse;
 import greenecomall.entity.TreePosition;
 import greenecomall.entity.User;
 import greenecomall.enums.NotificationType;
@@ -13,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -23,28 +27,172 @@ public class TreeService {
     private final UserRepository userRepository;
     private final NotificationService notificationService;
 
-    // BonusService injected via setter to avoid circular dependency
+    // Setter injection to break TreeService ↔ BonusService circular dependency
     private BonusService bonusService;
 
     public void setBonusService(BonusService bonusService) {
         this.bonusService = bonusService;
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // PUBLIC ENTRY POINTS
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
-     * Places a newly activated user into the inviter's tree using BFS.
-     * Called within activateUser transaction from PaymentService.
+     * Called by PaymentService when a new user activates.
+     * Places the user into the inviter's Stage-1 tree using BFS.
      */
     @Transactional
     public void placeNewUser(User inviter, User newUser) {
-        placeInTree(inviter, newUser, inviter.getCurrentLevel(), 1);
+        int level = inviter.getCurrentLevel();
+        User directParent = bfsPlace(inviter, newUser, level, 1);
+        checkStage1Completion(inviter, level);
+
+        String msg = newUser.getFirstName() + " " + newUser.getLastName() + " присоединился к вашей команде";
+
+        // Always notify the tree root (inviter)
+        notificationService.send(inviter, NotificationType.NEW_MEMBER, "Новый участник", msg);
+
+        // Also notify the direct parent if the user landed on tier 2 (parent ≠ inviter)
+        if (directParent != null && !directParent.getId().equals(inviter.getId())) {
+            notificationService.send(directParent, NotificationType.NEW_MEMBER,
+                    "Новый участник в вашей ветке",
+                    newUser.getFirstName() + " " + newUser.getLastName() + " занял позицию под вами");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // STAGE TRANSITIONS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Stage 1 → Stage 2.
+     * Called when root's Stage-1 tree has all 6 positions filled.
+     */
+    @Transactional
+    public void onStage1Completed(User user, int level) {
+        markStageComplete(user, level, 1);
+
+        if (bonusService != null) {
+            bonusService.createStageBonuses(user, level, 1);
+
+            // 1250 сом прямому реферу каждого из 6 участников матрицы
+            List<User> members = collectMatrixMembers(user, level, 1);
+            bonusService.createMemberReferralBonuses(level, members);
+        }
+
+        user.setCurrentStage(2);
+        userRepository.save(user);
+
+        log.info("User {} completed Stage 1 at level {}", user.getId(), level);
+
+        // Fill a Stage-2 slot under the DIRECT inviter (if inviter is already on Stage 2)
+        fillStage2UnderInviter(user, level);
+
+        notificationService.send(user, NotificationType.STAGE_COMPLETE,
+                "Этап 1 завершён",
+                "Все 6 позиций заполнены. Переход на Этап 2 уровня " + level + ".");
     }
 
     /**
-     * BFS placement: find first node in inviter's Stage-1 tree that has fewer than 2 children.
-     * Left branch preferred when counts are equal.
+     * Stage 2 → Stage 3.
+     * Called when both fixed partners of user have been assigned.
      */
-    private void placeInTree(User root, User newUser, int level, int stage) {
-        // BFS over tree using Queue — iterative, not recursive
+    @Transactional
+    public void onStage2Completed(User user, int level) {
+        markStageComplete(user, level, 2);
+
+        if (bonusService != null) {
+            bonusService.createStageBonuses(user, level, 2); // платит только уровням 3-4
+        }
+
+        user.setCurrentStage(3);
+        userRepository.save(user);
+
+        // Accelerator is placed only on Levels 1 and 2
+        if (level <= 2) {
+            placeAccelerator(user, level);
+        }
+
+        log.info("User {} completed Stage 2 at level {}", user.getId(), level);
+
+        // Notify the inviter's tree root that one more member reached Stage 3
+        checkStage3Progress(user, level);
+
+        notificationService.send(user, NotificationType.STAGE_COMPLETE,
+                "Этап 2 завершён",
+                "Оба партнёра подтверждены. Вы на Этапе 3 уровня " + level + ".");
+    }
+
+    /**
+     * Stage 3 → Stage 4.
+     * Called when ALL 6 positions in user's Stage-1 tree have reached Stage 3.
+     */
+    @Transactional
+    public void onStage3Completed(User user, int level) {
+        markStageComplete(user, level, 3);
+
+        if (bonusService != null) {
+            bonusService.createStageBonuses(user, level, 3);
+        }
+
+        user.setCurrentStage(4);
+        userRepository.save(user);
+
+        log.info("User {} completed Stage 3 at level {}", user.getId(), level);
+
+        // Notify inviter that one more team member reached Stage 4
+        checkStage4Progress(user, level);
+
+        notificationService.send(user, NotificationType.STAGE_COMPLETE,
+                "Этап 3 завершён",
+                "Вся команда вышла на Этап 3. Уровень " + level + " почти завершён!");
+    }
+
+    /**
+     * Stage 4 → next Level (or Shareholder if Level 4).
+     * Called when BOTH fixed partners of user have reached Stage 4.
+     */
+    @Transactional
+    public void onStage4Completed(User user, int level) {
+        markStageComplete(user, level, 4);
+
+        if (bonusService != null) {
+            bonusService.createStageBonuses(user, level, 4); // платит только уровню 4
+        }
+
+        if (level < 4) {
+            int nextLevel = level + 1;
+            user.setCurrentLevel(nextLevel);
+            user.setCurrentStage(1);
+            userRepository.save(user);
+
+            log.info("User {} advanced to level {}", user.getId(), nextLevel);
+
+            // Re-seed Stage-1 tree for next level with existing fixed partners
+            reEnterNextLevel(user, nextLevel);
+
+            notificationService.send(user, NotificationType.LEVEL_UP,
+                    "Новый уровень!",
+                    "Поздравляем! Вы перешли на Уровень " + nextLevel + ".");
+        } else {
+            // Level 4 Stage 4 done → Shareholder
+            notificationService.send(user, NotificationType.LEVEL_UP,
+                    "Вы стали Акционером!",
+                    "Поздравляем! Вы достигли вершины и теперь получаете дивиденды.");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // INTERNAL: BFS PLACEMENT
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Iterative BFS — finds the first free slot in the inviter's tree and places newUser there.
+     * Left position preferred when both branches are equal.
+     * Returns the direct parent node where the user was placed (null if no slot found).
+     */
+    private User bfsPlace(User root, User newUser, int level, int stage) {
         Queue<User> queue = new ArrayDeque<>();
         queue.add(root);
 
@@ -52,31 +200,30 @@ public class TreeService {
             User current = queue.poll();
             List<TreePosition> children = treePositionRepo.findByParentAndLevelAndStage(current, level, stage);
 
-            boolean hasLeft = children.stream().anyMatch(c -> c.getPosition() == 1);
+            boolean hasLeft  = children.stream().anyMatch(c -> c.getPosition() == 1);
             boolean hasRight = children.stream().anyMatch(c -> c.getPosition() == 2);
 
             if (!hasLeft) {
-                createPosition(newUser, current, level, stage, 1);
-                afterPlacement(root, newUser, level, stage);
-                return;
+                savePosition(newUser, current, level, stage, 1);
+                return current;
             }
             if (!hasRight) {
-                createPosition(newUser, current, level, stage, 2);
-                afterPlacement(root, newUser, level, stage);
-                return;
+                savePosition(newUser, current, level, stage, 2);
+                return current;
             }
 
-            // Both slots filled — add children to queue (left first)
+            // Both slots taken — enqueue real children (accelerators excluded) left→right
             children.stream()
                     .filter(c -> !c.getIsAccelerator())
                     .sorted(Comparator.comparingInt(TreePosition::getPosition))
                     .forEach(c -> queue.add(c.getUser()));
         }
 
-        log.error("BFS could not find a free position in tree of user {}", root.getId());
+        log.error("BFS: no free position found in tree of user {} level={} stage={}", root.getId(), level, stage);
+        return null;
     }
 
-    private void createPosition(User user, User parent, int level, int stage, int position) {
+    private void savePosition(User user, User parent, int level, int stage, int position) {
         treePositionRepo.save(TreePosition.builder()
                 .user(user)
                 .parent(parent)
@@ -88,212 +235,157 @@ public class TreeService {
                 .build());
     }
 
-    /** After placing user — check if root's Stage-1 tree is now complete (6 positions filled). */
-    private void afterPlacement(User root, User newUser, int level, int stage) {
-        notificationService.send(root, NotificationType.NEW_MEMBER,
-                "Новый участник",
-                newUser.getFirstName() + " " + newUser.getLastName() + " присоединился к вашей команде");
+    // ─────────────────────────────────────────────────────────────────────────
+    // INTERNAL: STAGE COMPLETION CHECKS
+    // ─────────────────────────────────────────────────────────────────────────
 
-        if (stage == 1) {
-            int filled = countStage1Children(root, level);
-            if (filled >= 6) {
-                onStage1Completed(root, level);
-            }
-        }
-    }
+    /**
+     * Checks if root's Stage-1 tree is now fully filled (6 positions = 2 levels deep).
+     * Accelerators count as real positions per the business rules.
+     */
+    private void checkStage1Completion(User root, int level) {
+        int tier1 = treePositionRepo.countByParentAndLevelAndStage(root, level, 1);
+        if (tier1 < 2) return; // not even both direct slots filled
 
-    /** Counts all non-accelerator positions under root at given level/stage=1 (max depth 2). */
-    private int countStage1Children(User root, int level) {
-        return treePositionRepo.countByParentAndLevelAndStage(root, level, 1)
-                + treePositionRepo.findByParentAndLevelAndStage(root, level, 1)
-                .stream()
-                .mapToInt(pos -> treePositionRepo.countByParentAndLevelAndStage(pos.getUser(), level, 1))
+        List<TreePosition> directChildren = treePositionRepo.findByParentAndLevelAndStage(root, level, 1);
+        int tier2 = directChildren.stream()
+                .mapToInt(c -> treePositionRepo.countByParentAndLevelAndStage(c.getUser(), level, 1))
                 .sum();
+
+        if (tier1 + tier2 >= 6) {
+            onStage1Completed(root, level);
+        }
     }
 
     /**
-     * Called when a user fills all 6 Stage-1 positions.
+     * After user advances to Stage 3, checks if the root of the tree user belongs to
+     * now has all 6 members on Stage 3 — which triggers Stage 3 completion for that root.
      */
-    @Transactional
-    public void onStage1Completed(User user, int level) {
-        // Mark Stage-1 position as COMPLETED
-        treePositionRepo.findByUserAndLevelAndStage(user, level, 1).ifPresent(pos -> {
-            pos.setStageStatus(StageStatus.COMPLETED);
-            pos.setCompletedStageAt(LocalDateTime.now());
-            treePositionRepo.save(pos);
-        });
+    private void checkStage3Progress(User user, int level) {
+        User treeRoot = findStage1TreeRoot(user, level);
+        if (treeRoot == null) return;
+        if (treeRoot.getCurrentStage() != 3) return; // root hasn't reached stage 3 yet itself
 
-        // Confirm pending bonuses for inviter and grandparent
-        if (bonusService != null) {
-            bonusService.confirmBonusesForUser(user);
+        boolean allAtStage3 = allSixMembersAtStage(treeRoot, level, 3);
+        if (allAtStage3) {
+            onStage3Completed(treeRoot, level);
         }
-
-        // Advance to Stage 2
-        user.setCurrentStage(2);
-        userRepository.save(user);
-
-        // Try to fill Stage-2 slot under any ancestor who is currently on Stage 2
-        tryFillStage2Slot(user, level);
-
-        notificationService.send(user, NotificationType.STAGE_COMPLETE,
-                "Этап 1 завершён",
-                "Вы успешно завершили Этап 1 уровня " + level + ". Переход на Этап 2.");
     }
 
     /**
-     * Walk up the inviter chain and find an ancestor on Stage 2 with an open slot.
-     * On Level 1 this implements the "race" (first finisher → left, second → right).
-     * On Levels 2-4 fixed partners are already set, so no race is needed.
+     * After user advances to Stage 4, checks if the user is a fixed partner of their inviter
+     * and both partners are now on Stage 4 — which triggers Stage 4 completion for the inviter.
      */
-    private void tryFillStage2Slot(User user, int level) {
-        User ancestor = user.getInviter();
-        while (ancestor != null) {
-            if (ancestor.getCurrentStage() == 2 && ancestor.getCurrentLevel() == level) {
-                boolean filled = assignStage2Partner(ancestor, user, level);
-                if (filled) return;
-            }
-            ancestor = ancestor.getInviter();
+    private void checkStage4Progress(User user, int level) {
+        // Reload user to get fresh data
+        User fresh = userRepository.findById(user.getId()).orElse(user);
+        User inviter = fresh.getInviter();
+        if (inviter == null) return;
+
+        inviter = userRepository.findById(inviter.getId()).orElse(inviter);
+        if (inviter.getCurrentStage() != 4) return;
+
+        boolean isLeftPartner  = inviter.getFixedPartnerLeft()  != null
+                && inviter.getFixedPartnerLeft().getId().equals(user.getId());
+        boolean isRightPartner = inviter.getFixedPartnerRight() != null
+                && inviter.getFixedPartnerRight().getId().equals(user.getId());
+
+        if (!isLeftPartner && !isRightPartner) return;
+
+        boolean leftDone  = inviter.getFixedPartnerLeft()  != null
+                && inviter.getFixedPartnerLeft().getCurrentStage()  >= 4;
+        boolean rightDone = inviter.getFixedPartnerRight() != null
+                && inviter.getFixedPartnerRight().getCurrentStage() >= 4;
+
+        if (leftDone && rightDone) {
+            onStage4Completed(inviter, level);
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // INTERNAL: STAGE 2 PARTNER ASSIGNMENT
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
-     * Returns true if the slot was filled and, if both slots are now full, triggers Stage-2 completion.
+     * When user completes Stage 1 they move under their DIRECT inviter on Stage 2.
+     * Level 1 — RACE: first finisher → left, second → right.
+     * Levels 2-4 — FIXED: the same two partners are placed automatically (no race).
      */
-    private boolean assignStage2Partner(User ancestor, User partner, int level) {
-        // Reload with lock
-        ancestor = userRepository.findByIdForUpdate(ancestor.getId()).orElse(ancestor);
+    private void fillStage2UnderInviter(User user, int level) {
+        if (user.getInviter() == null) return;
 
-        if (ancestor.getFixedPartnerLeft() == null) {
-            ancestor.setFixedPartnerLeft(partner);
-            userRepository.save(ancestor);
+        UUID inviterId = user.getInviter().getId();
+        User inviter = userRepository.findByIdForUpdate(inviterId)
+                .orElseThrow(() -> new IllegalStateException("Inviter not found: " + inviterId));
 
-            notificationService.send(ancestor, NotificationType.NEW_MEMBER,
-                    "Партнёр на Этапе 2",
-                    partner.getFirstName() + " занял левую позицию на Этапе 2");
-            return true;
+        // Inviter must be on Stage 2 to receive a partner
+        if (inviter.getCurrentStage() != 2 || inviter.getCurrentLevel() != level) return;
+
+        if (inviter.getFixedPartnerLeft() == null) {
+            inviter.setFixedPartnerLeft(user);
+            userRepository.save(inviter);
+
+            notificationService.send(inviter, NotificationType.NEW_MEMBER,
+                    "Этап 2 — левая позиция занята",
+                    user.getFirstName() + " " + user.getLastName() + " встал на Этап 2 (слева)");
+
+        } else if (inviter.getFixedPartnerRight() == null) {
+            inviter.setFixedPartnerRight(user);
+            userRepository.save(inviter);
+
+            notificationService.send(inviter, NotificationType.NEW_MEMBER,
+                    "Этап 2 — правая позиция занята",
+                    user.getFirstName() + " " + user.getLastName() + " встал на Этап 2 (справа)");
+
+            // Both slots filled — Stage 2 is done
+            onStage2Completed(inviter, level);
         }
-
-        if (ancestor.getFixedPartnerRight() == null) {
-            ancestor.setFixedPartnerRight(partner);
-            userRepository.save(ancestor);
-
-            notificationService.send(ancestor, NotificationType.NEW_MEMBER,
-                    "Партнёр на Этапе 2",
-                    partner.getFirstName() + " занял правую позицию на Этапе 2");
-
-            // Both slots filled — complete Stage 2
-            onStage2Completed(ancestor, level);
-            return true;
-        }
-
-        return false; // ancestor's stage 2 already full
+        // If both slots already filled — do nothing (inviter already beyond Stage 2)
     }
 
-    /**
-     * Called when both Stage-2 partners are assigned.
-     * Advances ancestor to Stage 3 and places an accelerator.
-     */
-    @Transactional
-    public void onStage2Completed(User user, int level) {
-        user.setCurrentStage(3);
-        userRepository.save(user);
-
-        // Place accelerator on levels 1 and 2 only
-        if (level <= 2) {
-            placeAccelerator(user, level);
-        }
-
-        notificationService.send(user, NotificationType.STAGE_COMPLETE,
-                "Этап 2 завершён",
-                "Оба партнёра подтверждены. Вы на Этапе 3 уровня " + level + ".");
-    }
+    // ─────────────────────────────────────────────────────────────────────────
+    // INTERNAL: ACCELERATOR
+    // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Called when all 6 members of user's team have reached Stage 3.
-     */
-    @Transactional
-    public void onStage3Completed(User user, int level) {
-        if (bonusService != null) {
-            bonusService.createStageBonuses(user, level, 3);
-        }
-
-        user.setCurrentStage(4);
-        userRepository.save(user);
-
-        notificationService.send(user, NotificationType.STAGE_COMPLETE,
-                "Этап 3 завершён",
-                "Все 6 участников команды достигли Этапа 3. Уровень " + level + " завершён!");
-    }
-
-    /**
-     * Called when both fixed partners of user have reached Stage 4.
-     * Advances user to next level (or marks as shareholder).
-     */
-    @Transactional
-    public void onStage4Completed(User user, int level) {
-        if (level < 4) {
-            user.setCurrentLevel(level + 1);
-            user.setCurrentStage(1);
-            userRepository.save(user);
-
-            notificationService.send(user, NotificationType.LEVEL_UP,
-                    "Новый уровень!",
-                    "Поздравляем! Вы перешли на уровень " + (level + 1) + ".");
-
-            // Re-place user and their fixed partners into the new level tree
-            User left = user.getFixedPartnerLeft();
-            User right = user.getFixedPartnerRight();
-
-            if (left != null) placeInTree(user, left, level + 1, 1);
-            if (right != null) placeInTree(user, right, level + 1, 1);
-        } else {
-            // Level 4 complete → Shareholder
-            notificationService.send(user, NotificationType.LEVEL_UP,
-                    "Акционер!",
-                    "Вы стали Акционером Green Eco Mall! Теперь вы получаете дивиденды.");
-        }
-    }
-
-    /**
-     * Places a virtual accelerator in the weaker branch of user's Stage-1 tree.
-     * Only for levels 1 and 2.
+     * Places a virtual accelerator in the WEAKER branch of user's Stage-1 tree.
+     * Only for Levels 1 and 2. Counts existing positions (including accelerators)
+     * to determine which branch is weaker.
      */
     @Transactional
     public void placeAccelerator(User user, int level) {
-        int leftCount = countBranchSize(user, level, 1, 1);
-        int rightCount = countBranchSize(user, level, 1, 2);
+        int leftSize  = branchSize(user, level, 1);
+        int rightSize = branchSize(user, level, 2);
 
-        int targetPosition = leftCount <= rightCount ? 1 : 2;
+        int weakSide = (leftSize <= rightSize) ? 1 : 2;
 
-        // Find the direct child on the target side
         List<TreePosition> directChildren = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
-        Optional<TreePosition> targetChild = directChildren.stream()
-                .filter(c -> c.getPosition() == targetPosition)
+        Optional<TreePosition> weakDirectChild = directChildren.stream()
+                .filter(c -> c.getPosition() == weakSide)
                 .findFirst();
 
-        if (targetChild.isEmpty()) {
-            // The slot itself is free — place accelerator directly under user
+        if (weakDirectChild.isEmpty()) {
+            // The direct slot itself is empty — place accelerator right under root
             treePositionRepo.save(TreePosition.builder()
-                    .user(user) // accelerator owned by root
+                    .user(user)
                     .parent(user)
                     .level(level)
                     .stage(1)
-                    .position(targetPosition)
+                    .position(weakSide)
                     .isAccelerator(true)
                     .stageStatus(StageStatus.IN_PROGRESS)
                     .build());
         } else {
-            // BFS inside the weak branch to find first free slot
-            User branchRoot = targetChild.get().getUser();
-            placeBfsAccelerator(user, branchRoot, level);
+            // Find first free slot inside the weak branch via BFS
+            bfsPlaceAccelerator(user, weakDirectChild.get().getUser(), level);
         }
 
         notificationService.send(user, NotificationType.ACCELERATOR_PLACED,
                 "Ускоритель размещён",
-                "Система разместила ускоритель в слабую ветку вашего дерева.");
+                "Система автоматически разместила ускоритель в слабую ветку вашей команды.");
     }
 
-    private void placeBfsAccelerator(User owner, User branchRoot, int level) {
+    private void bfsPlaceAccelerator(User owner, User branchRoot, int level) {
         Queue<User> queue = new ArrayDeque<>();
         queue.add(branchRoot);
 
@@ -301,28 +393,17 @@ public class TreeService {
             User current = queue.poll();
             List<TreePosition> children = treePositionRepo.findByParentAndLevelAndStage(current, level, 1);
 
-            boolean hasLeft = children.stream().anyMatch(c -> c.getPosition() == 1);
+            boolean hasLeft  = children.stream().anyMatch(c -> c.getPosition() == 1);
             boolean hasRight = children.stream().anyMatch(c -> c.getPosition() == 2);
 
-            if (!hasLeft) {
+            int freeSlot = !hasLeft ? 1 : !hasRight ? 2 : 0;
+            if (freeSlot != 0) {
                 treePositionRepo.save(TreePosition.builder()
                         .user(owner)
                         .parent(current)
                         .level(level)
                         .stage(1)
-                        .position(1)
-                        .isAccelerator(true)
-                        .stageStatus(StageStatus.IN_PROGRESS)
-                        .build());
-                return;
-            }
-            if (!hasRight) {
-                treePositionRepo.save(TreePosition.builder()
-                        .user(owner)
-                        .parent(current)
-                        .level(level)
-                        .stage(1)
-                        .position(2)
+                        .position(freeSlot)
                         .isAccelerator(true)
                         .stageStatus(StageStatus.IN_PROGRESS)
                         .build());
@@ -336,67 +417,165 @@ public class TreeService {
         }
     }
 
-    /** Count all users in a specific branch (position 1=left, 2=right) of user's Stage-1 tree. */
-    private int countBranchSize(User root, int level, int stage, int side) {
-        List<TreePosition> directChildren = treePositionRepo.findByParentAndLevelAndStage(root, level, stage);
-        Optional<TreePosition> sideChild = directChildren.stream()
-                .filter(c -> c.getPosition() == side)
-                .findFirst();
+    /**
+     * Removes accelerator when the user it is under completes Stage 1.
+     */
+    @Transactional
+    public void removeAcceleratorsUnder(User user, int level) {
+        treePositionRepo.findByParentAndLevelAndStage(user, level, 1)
+                .stream()
+                .filter(TreePosition::getIsAccelerator)
+                .forEach(treePositionRepo::delete);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // INTERNAL: LEVEL TRANSITION
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * After advancing to the next level, the user's two fixed partners are placed
+     * into their Stage-1 tree for that new level (same partners, no new race).
+     */
+    private void reEnterNextLevel(User user, int level) {
+        User left  = user.getFixedPartnerLeft();
+        User right = user.getFixedPartnerRight();
+        if (left  != null) bfsPlace(user, left,  level, 1);
+        if (right != null) bfsPlace(user, right, level, 1); // return value unused here
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // INTERNAL: HELPERS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Собирает всех реальных участников (без ускорителей) в матрице root (тир 1 + тир 2). */
+    private List<User> collectMatrixMembers(User root, int level, int stage) {
+        List<User> members = new ArrayList<>();
+        List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(root, level, stage);
+        for (TreePosition t1 : tier1) {
+            if (t1.getIsAccelerator()) continue;
+            members.add(t1.getUser());
+            treePositionRepo.findByParentAndLevelAndStage(t1.getUser(), level, stage)
+                    .stream().filter(t2 -> !t2.getIsAccelerator())
+                    .forEach(t2 -> members.add(t2.getUser()));
+        }
+        return members;
+    }
+
+    private void markStageComplete(User user, int level, int stage) {
+        treePositionRepo.findByUserAndLevelAndStage(user, level, stage).ifPresent(pos -> {
+            pos.setStageStatus(StageStatus.COMPLETED);
+            pos.setCompletedStageAt(LocalDateTime.now());
+            treePositionRepo.save(pos);
+        });
+    }
+
+    /** BFS count of all nodes in a specific branch (side: 1=left, 2=right) under root at stage 1. */
+    private int branchSize(User root, int level, int side) {
+        List<TreePosition> direct = treePositionRepo.findByParentAndLevelAndStage(root, level, 1);
+        Optional<TreePosition> sideChild = direct.stream().filter(c -> c.getPosition() == side).findFirst();
         if (sideChild.isEmpty()) return 0;
 
-        // BFS count within branch
         int count = 0;
         Queue<User> queue = new ArrayDeque<>();
         queue.add(sideChild.get().getUser());
         while (!queue.isEmpty()) {
-            User current = queue.poll();
+            User cur = queue.poll();
             count++;
-            treePositionRepo.findByParentAndLevelAndStage(current, level, stage)
+            treePositionRepo.findByParentAndLevelAndStage(cur, level, 1)
                     .forEach(c -> queue.add(c.getUser()));
         }
         return count;
     }
 
-    /** Build tree response for API — recursive node building. */
-    public greenecomall.dto.response.TreeResponse getTree(User user, int level, int stage) {
+    /**
+     * Walks UP the TreePosition parent chain to find the root of the Stage-1 tree
+     * that this user belongs to (the root is the node with no parent in stage 1).
+     */
+    private User findStage1TreeRoot(User user, int level) {
+        Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(user, level, 1);
+        if (pos.isEmpty() || pos.get().getParent() == null) return null;
+
+        User parent = pos.get().getParent();
+        // Walk up until we find a node whose own Stage-1 position has no parent (= root)
+        while (true) {
+            Optional<TreePosition> parentPos = treePositionRepo.findByUserAndLevelAndStage(parent, level, 1);
+            if (parentPos.isEmpty() || parentPos.get().getParent() == null) return parent;
+            parent = parentPos.get().getParent();
+        }
+    }
+
+    /**
+     * Returns true if all 6 members in root's Stage-1 tree have currentStage >= minStage.
+     */
+    private boolean allSixMembersAtStage(User root, int level, int minStage) {
+        List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(root, level, 1);
+        if (tier1.size() < 2) return false;
+
+        for (TreePosition t1 : tier1) {
+            if (t1.getUser().getCurrentStage() < minStage) return false;
+            List<TreePosition> tier2 = treePositionRepo.findByParentAndLevelAndStage(t1.getUser(), level, 1);
+            if (tier2.size() < 2) return false;
+            for (TreePosition t2 : tier2) {
+                if (t2.getUser().getCurrentStage() < minStage) return false;
+            }
+        }
+        return true;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // API: BUILD TREE RESPONSE
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public TreeResponse getTree(User user, int level, int stage) {
         TreePosition rootPos = treePositionRepo.findByUserAndLevelAndStage(user, level, stage).orElse(null);
         StageStatus status = rootPos != null ? rootPos.getStageStatus() : StageStatus.WAITING;
 
-        greenecomall.dto.response.TreeNodeResponse rootNode = buildNode(user, level, stage);
-        int filled = countStage1Children(user, level);
+        List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(user, level, stage);
+        int filled = tier1.size() + tier1.stream()
+                .mapToInt(c -> treePositionRepo.countByParentAndLevelAndStage(c.getUser(), level, stage))
+                .sum();
 
-        boolean acceleratorActive = treePositionRepo
-                .findByParentAndLevelAndStage(user, level, stage)
-                .stream().anyMatch(TreePosition::getIsAccelerator);
+        boolean hasAccelerator = tier1.stream().anyMatch(TreePosition::getIsAccelerator)
+                || tier1.stream().anyMatch(c ->
+                treePositionRepo.findByParentAndLevelAndStage(c.getUser(), level, stage)
+                        .stream().anyMatch(TreePosition::getIsAccelerator));
 
-        return greenecomall.dto.response.TreeResponse.builder()
+        TreeNodeResponse rootNode = buildNode(user, level, stage, 3); // depth 3 = root + 2 tiers
+
+        return TreeResponse.builder()
                 .root(rootNode)
                 .stageStatus(status)
-                .progress(greenecomall.dto.response.TreeResponse.TreeProgress.builder()
-                        .filled(filled).total(6).build())
-                .accelerator(greenecomall.dto.response.TreeResponse.AcceleratorInfo.builder()
-                        .active(acceleratorActive).build())
+                .progress(TreeResponse.TreeProgress.builder().filled(filled).total(6).build())
+                .accelerator(TreeResponse.AcceleratorInfo.builder().active(hasAccelerator).build())
                 .build();
     }
 
-    private greenecomall.dto.response.TreeNodeResponse buildNode(User user, int level, int stage) {
-        List<TreePosition> children = treePositionRepo.findByParentAndLevelAndStage(user, level, stage);
-        List<greenecomall.dto.response.TreeNodeResponse> childNodes = new ArrayList<>();
+    private TreeNodeResponse buildNode(User user, int level, int stage, int depth) {
+        TreePosition pos = treePositionRepo.findByUserAndLevelAndStage(user, level, stage).orElse(null);
+        List<TreeNodeResponse> childNodes = new ArrayList<>();
 
-        for (TreePosition child : children) {
-            childNodes.add(greenecomall.dto.response.TreeNodeResponse.builder()
-                    .userId(child.getUser().getId())
-                    .name(child.getUser().getFirstName() + " " + child.getUser().getLastName())
-                    .initials(initials(child.getUser()))
-                    .position(child.getPosition())
-                    .isAccelerator(child.getIsAccelerator())
-                    .stageStatus(child.getStageStatus())
-                    .children(child.getIsAccelerator() ? List.of() : buildChildNodes(child.getUser(), level, stage))
-                    .build());
+        if (depth > 0) {
+            List<TreePosition> children = treePositionRepo.findByParentAndLevelAndStage(user, level, stage);
+            children.stream()
+                    .sorted(Comparator.comparingInt(TreePosition::getPosition))
+                    .forEach(child -> {
+                        TreePosition childPos = child;
+                        childNodes.add(TreeNodeResponse.builder()
+                                .userId(childPos.getUser().getId())
+                                .name(childPos.getUser().getFirstName() + " " + childPos.getUser().getLastName())
+                                .initials(initials(childPos.getUser()))
+                                .position(childPos.getPosition())
+                                .isAccelerator(childPos.getIsAccelerator())
+                                .stageStatus(childPos.getStageStatus())
+                                .children(childPos.getIsAccelerator()
+                                        ? List.of()
+                                        : buildNode(childPos.getUser(), level, stage, depth - 1).children())
+                                .build());
+                    });
         }
 
-        TreePosition pos = treePositionRepo.findByUserAndLevelAndStage(user, level, stage).orElse(null);
-        return greenecomall.dto.response.TreeNodeResponse.builder()
+        return TreeNodeResponse.builder()
                 .userId(user.getId())
                 .name(user.getFirstName() + " " + user.getLastName())
                 .initials(initials(user))
@@ -405,24 +584,367 @@ public class TreeService {
                 .build();
     }
 
-    private List<greenecomall.dto.response.TreeNodeResponse> buildChildNodes(User parent, int level, int stage) {
-        List<TreePosition> children = treePositionRepo.findByParentAndLevelAndStage(parent, level, stage);
-        List<greenecomall.dto.response.TreeNodeResponse> result = new ArrayList<>();
-        for (TreePosition child : children) {
-            result.add(greenecomall.dto.response.TreeNodeResponse.builder()
-                    .userId(child.getUser().getId())
-                    .name(child.getUser().getFirstName() + " " + child.getUser().getLastName())
-                    .initials(initials(child.getUser()))
-                    .position(child.getPosition())
-                    .isAccelerator(child.getIsAccelerator())
-                    .stageStatus(child.getStageStatus())
-                    .children(List.of())
-                    .build());
-        }
-        return result;
+    private String initials(User u) {
+        return String.valueOf(u.getFirstName().charAt(0)).toUpperCase()
+                + String.valueOf(u.getLastName().charAt(0)).toUpperCase();
     }
 
-    private String initials(User u) {
-        return (u.getFirstName().charAt(0) + "" + u.getLastName().charAt(0)).toUpperCase();
+    // ─────────────────────────────────────────────────────────────────────────
+    // API: STAGES OVERVIEW — все 4 этапа текущего уровня
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public greenecomall.dto.response.StagesOverviewResponse getStagesOverview(User user) {
+        int level = user.getCurrentLevel();
+        int current = user.getCurrentStage();
+
+        List<greenecomall.dto.response.StagesOverviewResponse.StageDetail> stages = new ArrayList<>();
+        stages.add(buildStage1Detail(user, level, current));
+        stages.add(buildStage2Detail(user, level, current));
+        stages.add(buildStage3Detail(user, level, current));
+        stages.add(buildStage4Detail(user, level, current));
+
+        return greenecomall.dto.response.StagesOverviewResponse.builder()
+                .currentLevel(level)
+                .currentStage(current)
+                .stages(stages)
+                .build();
+    }
+
+    private greenecomall.dto.response.StagesOverviewResponse.StageDetail buildStage1Detail(
+            User user, int level, int currentStage) {
+
+        StageStatus status = resolveStatus(user, level, 1, currentStage);
+
+        // Collect all 6 positions (2 tiers deep)
+        List<greenecomall.dto.response.StagesOverviewResponse.TreeMember> members = new ArrayList<>();
+        int posNum = 2;
+
+        List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
+        tier1.sort(Comparator.comparingInt(TreePosition::getPosition));
+
+        for (TreePosition t1 : tier1) {
+            members.add(toTreeMember(posNum++, t1));
+            List<TreePosition> tier2 = treePositionRepo.findByParentAndLevelAndStage(t1.getUser(), level, 1);
+            tier2.sort(Comparator.comparingInt(TreePosition::getPosition));
+            for (TreePosition t2 : tier2) {
+                members.add(toTreeMember(posNum++, t2));
+            }
+        }
+
+        int filled = members.size();
+
+        LocalDateTime completedAt = treePositionRepo.findByUserAndLevelAndStage(user, level, 1)
+                .map(TreePosition::getCompletedStageAt).orElse(null);
+
+        return greenecomall.dto.response.StagesOverviewResponse.StageDetail.builder()
+                .stage(1)
+                .title("Этап 1 — Формирование команды")
+                .description("Заполни 6 позиций своего дерева (2 яруса по 2). " +
+                        "Бонусы за приглашённых подтвердятся когда каждый из них сам соберёт 6.")
+                .status(status)
+                .progress(greenecomall.dto.response.StagesOverviewResponse.Stage1Progress.builder()
+                        .filled(filled).total(6).members(members).build())
+                .completedAt(completedAt)
+                .build();
+    }
+
+    private greenecomall.dto.response.StagesOverviewResponse.StageDetail buildStage2Detail(
+            User user, int level, int currentStage) {
+
+        StageStatus status = resolveStatus(user, level, 2, currentStage);
+
+        User left  = user.getFixedPartnerLeft();
+        User right = user.getFixedPartnerRight();
+
+        LocalDateTime leftFilledAt  = left  != null ? treePositionRepo
+                .findByUserAndLevelAndStage(left,  level, 1)
+                .map(TreePosition::getCompletedStageAt).orElse(null) : null;
+        LocalDateTime rightFilledAt = right != null ? treePositionRepo
+                .findByUserAndLevelAndStage(right, level, 1)
+                .map(TreePosition::getCompletedStageAt).orElse(null) : null;
+
+        LocalDateTime completedAt = treePositionRepo.findByUserAndLevelAndStage(user, level, 2)
+                .map(TreePosition::getCompletedStageAt).orElse(null);
+
+        return greenecomall.dto.response.StagesOverviewResponse.StageDetail.builder()
+                .stage(2)
+                .title("Этап 2 — Domkrat (гонка партнёров)")
+                .description("Два первых участника из твоей ветки кто завершит Этап 1 " +
+                        "занимают левую и правую позицию. На уровне 1 — гонка, на уровнях 2-4 — те же партнёры.")
+                .status(status)
+                .progress(greenecomall.dto.response.StagesOverviewResponse.Stage2Progress.builder()
+                        .left(toPartnerSlot(left, leftFilledAt))
+                        .right(toPartnerSlot(right, rightFilledAt))
+                        .build())
+                .completedAt(completedAt)
+                .build();
+    }
+
+    private greenecomall.dto.response.StagesOverviewResponse.StageDetail buildStage3Detail(
+            User user, int level, int currentStage) {
+
+        StageStatus status = resolveStatus(user, level, 3, currentStage);
+
+        // All 6 members of user's Stage-1 tree — how many have reached Stage 3?
+        List<greenecomall.dto.response.StagesOverviewResponse.Stage3Member> members = new ArrayList<>();
+        int reached = 0;
+
+        List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
+        tier1.sort(Comparator.comparingInt(TreePosition::getPosition));
+
+        for (TreePosition t1 : tier1) {
+            boolean done = t1.getUser().getCurrentStage() >= 3;
+            if (done) reached++;
+            members.add(toStage3Member(t1.getUser(), done));
+
+            List<TreePosition> tier2 = treePositionRepo.findByParentAndLevelAndStage(t1.getUser(), level, 1);
+            tier2.sort(Comparator.comparingInt(TreePosition::getPosition));
+            for (TreePosition t2 : tier2) {
+                boolean done2 = t2.getUser().getCurrentStage() >= 3;
+                if (done2) reached++;
+                members.add(toStage3Member(t2.getUser(), done2));
+            }
+        }
+
+        LocalDateTime completedAt = treePositionRepo.findByUserAndLevelAndStage(user, level, 3)
+                .map(TreePosition::getCompletedStageAt).orElse(null);
+
+        return greenecomall.dto.response.StagesOverviewResponse.StageDetail.builder()
+                .stage(3)
+                .title("Этап 3 — Leader Core")
+                .description("Все 6 участников твоей команды должны дойти до Этапа 3. " +
+                        "Как только последний дойдёт — получишь этапный бонус.")
+                .status(status)
+                .progress(greenecomall.dto.response.StagesOverviewResponse.Stage3Progress.builder()
+                        .reached(reached).total(6).members(members).build())
+                .completedAt(completedAt)
+                .build();
+    }
+
+    private greenecomall.dto.response.StagesOverviewResponse.StageDetail buildStage4Detail(
+            User user, int level, int currentStage) {
+
+        StageStatus status = resolveStatus(user, level, 4, currentStage);
+
+        User left  = user.getFixedPartnerLeft();
+        User right = user.getFixedPartnerRight();
+
+        LocalDateTime leftFilledAt  = left  != null ? treePositionRepo
+                .findByUserAndLevelAndStage(left,  level, 3)
+                .map(TreePosition::getCompletedStageAt).orElse(null) : null;
+        LocalDateTime rightFilledAt = right != null ? treePositionRepo
+                .findByUserAndLevelAndStage(right, level, 3)
+                .map(TreePosition::getCompletedStageAt).orElse(null) : null;
+
+        LocalDateTime completedAt = treePositionRepo.findByUserAndLevelAndStage(user, level, 4)
+                .map(TreePosition::getCompletedStageAt).orElse(null);
+
+        return greenecomall.dto.response.StagesOverviewResponse.StageDetail.builder()
+                .stage(4)
+                .title("Этап 4 — Переход на следующий уровень")
+                .description("Оба фиксированных партнёра должны завершить Этап 3. " +
+                        "После этого вся команда переходит на следующий уровень вместе с тобой.")
+                .status(status)
+                .progress(greenecomall.dto.response.StagesOverviewResponse.Stage4Progress.builder()
+                        .left(toPartnerSlotStage4(left, leftFilledAt))
+                        .right(toPartnerSlotStage4(right, rightFilledAt))
+                        .build())
+                .completedAt(completedAt)
+                .build();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // API: TEAM ACTIVITY — лента событий в команде
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public List<greenecomall.dto.response.TeamActivityResponse> getTeamActivity(User user) {
+        int level = user.getCurrentLevel();
+        List<greenecomall.dto.response.TeamActivityResponse> events = new ArrayList<>();
+
+        // Collect all team members (positions 2-7 in user's tree across all stages)
+        Set<UUID> seen = new HashSet<>();
+        collectTeamMembers(user, level, 1, events, seen);
+
+        // Sort newest first
+        events.sort(Comparator.comparing(
+                greenecomall.dto.response.TeamActivityResponse::occurredAt,
+                Comparator.nullsLast(Comparator.reverseOrder())));
+        return events;
+    }
+
+    private void collectTeamMembers(User root, int level, int stage,
+            List<greenecomall.dto.response.TeamActivityResponse> events, Set<UUID> seen) {
+
+        List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(root, level, stage);
+        for (TreePosition t1 : tier1) {
+            if (t1.getIsAccelerator()) continue;
+            User member = t1.getUser();
+            addMemberEvents(member, level, events, seen);
+
+            List<TreePosition> tier2 = treePositionRepo.findByParentAndLevelAndStage(member, level, stage);
+            for (TreePosition t2 : tier2) {
+                if (!t2.getIsAccelerator()) {
+                    addMemberEvents(t2.getUser(), level, events, seen);
+                }
+            }
+        }
+    }
+
+    private void addMemberEvents(User member, int level,
+            List<greenecomall.dto.response.TeamActivityResponse> events, Set<UUID> seen) {
+        if (seen.contains(member.getId())) return;
+        seen.add(member.getId());
+
+        // JOIN event — when they activated
+        events.add(greenecomall.dto.response.TeamActivityResponse.builder()
+                .userId(member.getId())
+                .name(member.getFirstName() + " " + member.getLastName())
+                .initials(initials(member))
+                .event("JOINED")
+                .description(member.getFirstName() + " вступил в команду")
+                .level(level).stage(1)
+                .occurredAt(member.getActivatedAt())
+                .build());
+
+        // Stage completion events
+        for (int s = 1; s <= member.getCurrentStage() - 1; s++) {
+            int stageNum = s;
+            treePositionRepo.findByUserAndLevelAndStage(member, level, s)
+                    .filter(p -> p.getCompletedStageAt() != null)
+                    .ifPresent(p -> events.add(
+                            greenecomall.dto.response.TeamActivityResponse.builder()
+                                    .userId(member.getId())
+                                    .name(member.getFirstName() + " " + member.getLastName())
+                                    .initials(initials(member))
+                                    .event("STAGE_" + stageNum + "_DONE")
+                                    .description(member.getFirstName() + " завершил Этап " + stageNum)
+                                    .level(level).stage(stageNum)
+                                    .occurredAt(p.getCompletedStageAt())
+                                    .build()));
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // API: BRANCH STATS — левая и правая ветки с участниками
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public BranchStatsResponse getBranchStats(User user) {
+        int level = user.getCurrentLevel();
+        List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
+
+        BranchStatsResponse.BranchInfo leftInfo  = buildBranchInfo(user, level, 1, tier1);
+        BranchStatsResponse.BranchInfo rightInfo = buildBranchInfo(user, level, 2, tier1);
+
+        int filled = tier1.size() + tier1.stream()
+                .mapToInt(c -> treePositionRepo.countByParentAndLevelAndStage(c.getUser(), level, 1))
+                .sum();
+
+        return BranchStatsResponse.builder()
+                .left(leftInfo)
+                .right(rightInfo)
+                .totalFilled(filled)
+                .total(6)
+                .build();
+    }
+
+    private BranchStatsResponse.BranchInfo buildBranchInfo(User root, int level, int side,
+            List<TreePosition> tier1) {
+        List<BranchStatsResponse.BranchMember> members = new ArrayList<>();
+
+        Optional<TreePosition> directOpt = tier1.stream()
+                .filter(c -> c.getPosition() == side)
+                .findFirst();
+
+        if (directOpt.isPresent()) {
+            TreePosition direct = directOpt.get();
+            members.add(toBranchMember(direct));
+
+            treePositionRepo.findByParentAndLevelAndStage(direct.getUser(), level, 1)
+                    .forEach(child -> members.add(toBranchMember(child)));
+        }
+
+        return BranchStatsResponse.BranchInfo.builder()
+                .size(members.size())
+                .members(members)
+                .build();
+    }
+
+    private BranchStatsResponse.BranchMember toBranchMember(TreePosition tp) {
+        return BranchStatsResponse.BranchMember.builder()
+                .userId(tp.getUser().getId())
+                .name(tp.getUser().getFirstName() + " " + tp.getUser().getLastName())
+                .initials(initials(tp.getUser()))
+                .currentStage(tp.getUser().getCurrentStage())
+                .isAccelerator(tp.getIsAccelerator())
+                .build();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PRIVATE HELPERS for overview
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private StageStatus resolveStatus(User user, int level, int stage, int currentStage) {
+        if (currentStage > stage) return StageStatus.COMPLETED;
+        if (currentStage == stage) return StageStatus.IN_PROGRESS;
+        return StageStatus.WAITING;
+    }
+
+    private greenecomall.dto.response.StagesOverviewResponse.TreeMember toTreeMember(
+            int position, TreePosition tp) {
+        return greenecomall.dto.response.StagesOverviewResponse.TreeMember.builder()
+                .position(position)
+                .userId(tp.getUser().getId())
+                .name(tp.getUser().getFirstName() + " " + tp.getUser().getLastName())
+                .initials(initials(tp.getUser()))
+                .stageStatus(tp.getStageStatus())
+                .currentStage(tp.getUser().getCurrentStage())
+                .joinedAt(tp.getCreatedAt())
+                .build();
+    }
+
+    private greenecomall.dto.response.StagesOverviewResponse.PartnerSlot toPartnerSlot(
+            User partner, LocalDateTime filledAt) {
+        if (partner == null) {
+            return greenecomall.dto.response.StagesOverviewResponse.PartnerSlot.builder()
+                    .filled(false).build();
+        }
+        return greenecomall.dto.response.StagesOverviewResponse.PartnerSlot.builder()
+                .filled(true)
+                .userId(partner.getId())
+                .name(partner.getFirstName() + " " + partner.getLastName())
+                .initials(initials(partner))
+                .currentStage(partner.getCurrentStage())
+                .filledAt(filledAt)
+                .build();
+    }
+
+    private greenecomall.dto.response.StagesOverviewResponse.PartnerSlot toPartnerSlotStage4(
+            User partner, LocalDateTime completedAt) {
+        if (partner == null) {
+            return greenecomall.dto.response.StagesOverviewResponse.PartnerSlot.builder()
+                    .filled(false).build();
+        }
+        return greenecomall.dto.response.StagesOverviewResponse.PartnerSlot.builder()
+                .filled(partner.getCurrentStage() >= 4)
+                .userId(partner.getId())
+                .name(partner.getFirstName() + " " + partner.getLastName())
+                .initials(initials(partner))
+                .currentStage(partner.getCurrentStage())
+                .filledAt(completedAt)
+                .build();
+    }
+
+    private greenecomall.dto.response.StagesOverviewResponse.Stage3Member toStage3Member(
+            User member, boolean reachedStage3) {
+        return greenecomall.dto.response.StagesOverviewResponse.Stage3Member.builder()
+                .userId(member.getId())
+                .name(member.getFirstName() + " " + member.getLastName())
+                .initials(initials(member))
+                .currentStage(member.getCurrentStage())
+                .reachedStage3(reachedStage3)
+                .build();
     }
 }

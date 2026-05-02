@@ -38,8 +38,11 @@ public class User {
     @Column(nullable = false)
     private String passwordHash;
 
-    @Column(nullable = false, unique = true, length = 8)
+    @Column(nullable = false, unique = true, length = 14)
     private String referralCode;
+
+    // Finik номер для вывода средств (сохраняется в профиле)
+    private String finikPhone;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "inviter_id")

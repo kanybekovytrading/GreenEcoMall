@@ -1,5 +1,6 @@
 package greenecomall.entity;
 
+import greenecomall.enums.WithdrawalMethod;
 import greenecomall.enums.WithdrawalStatus;
 import jakarta.persistence.*;
 import lombok.*;
@@ -33,6 +34,14 @@ public class Withdrawal {
     @Column(nullable = false)
     private WithdrawalStatus status;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private WithdrawalMethod method;
+
+    @Column(nullable = false)
+    private String requisite;  // телефон для FINIK/PHONE_TRANSFER, номер карты для BANK_CARD
+
+    private String bankName;   // название банка / платёжной системы (необязательно)
     private String adminNote;
     private LocalDateTime reviewedAt;
 

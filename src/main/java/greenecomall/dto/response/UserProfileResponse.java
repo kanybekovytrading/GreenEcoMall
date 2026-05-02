@@ -16,11 +16,17 @@ public record UserProfileResponse(
         String phone,
         String passportNumber,
         String referralCode,
+        String referralLink,
         Role role,
         AccountStatus accountStatus,
         Integer currentLevel,
         Integer currentStage,
         BigDecimal balance,
+        String finikPhone,
+        // Inviter info
+        UUID inviterId,
+        String inviterName,
+        String inviterReferralCode,
         LocalDateTime createdAt,
         LocalDateTime activatedAt
 ) {}
