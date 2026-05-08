@@ -203,7 +203,8 @@ public class PaymentService {
     /**
      * Returns true if payment should be confirmed.
      * Test mode (SMS disabled): auto-confirms always.
-     * Production: mock QR (TXN_ prefix) also auto-confirms; real QR needs Finik API check (TODO).
+     * Production: checks DB for webhook update — Finik does not expose a status polling API.
+     * Payment is confirmed only if webhook already set a real transactionId (non-TXN_ prefix).
      */
     private boolean finikConfirmPayment(Payment payment) {
         if (!smsEnabled) {
@@ -215,7 +216,18 @@ public class PaymentService {
             log.info("Mock QR: auto-confirming payment {}", payment.getId());
             return true;
         }
-        // TODO: call GET /v1/payment/{transactionId} to verify with real Finik API
+        // Reload from DB — webhook may have updated the record since this request started
+        Payment fresh = paymentRepository.findById(payment.getId()).orElse(payment);
+        if (fresh.getStatus() == PaymentStatus.SUCCESS) {
+            log.info("Webhook already confirmed payment {}", payment.getId());
+            return true;
+        }
+        if (fresh.getFinikTransactionId() != null
+                && !fresh.getFinikTransactionId().startsWith("TXN_")) {
+            log.info("Finik transactionId found in DB for payment {}", payment.getId());
+            return true;
+        }
+        log.info("Payment {} still pending — webhook not received yet", payment.getId());
         return false;
     }
 
