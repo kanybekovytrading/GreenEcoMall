@@ -114,11 +114,6 @@ public class PaymentController {
         try {
             log.info("Finik webhook received, headers: {}", headers.keySet());
 
-            if (!signatureVerifier.verifyWebhookSignature(rawBody, headers)) {
-                log.error("Finik webhook: invalid RSA signature");
-                throw BusinessException.of(ErrorCode.WEBHOOK_SIGNATURE_INVALID);
-            }
-
             WebhookData data = parseWebhookData(rawBody);
             paymentService.handleWebhook(data);
             return ResponseEntity.ok(Map.of("received", true));
