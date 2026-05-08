@@ -33,6 +33,7 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 @Slf4j
+
 public class PaymentService {
 
     private final PaymentRepository paymentRepository;
@@ -114,7 +115,7 @@ public class PaymentService {
         requestBody.put("Amount", amount.intValue());
         requestBody.put("CardType", "FINIK_QR");
         requestBody.put("PaymentId", paymentId.toString());
-        requestBody.put("RedirectUrl", finikConfig.getWebhookUrl());
+        requestBody.put("RedirectUrl", finikConfig.getRedirectUrl());
 
         Map<String, Object> data = new HashMap<>();
         data.put("accountId", finikConfig.getAccountId());
@@ -123,7 +124,7 @@ public class PaymentService {
         data.put("description", "GreenEcoMall вступительный взнос");
         data.put("webhookUrl", finikConfig.getWebhookUrl());
         requestBody.put("Data", data);
-
+        log.info("webhook url is :{}", finikConfig.getWebhookUrl());
         String timestamp = String.valueOf(System.currentTimeMillis());
         URI uri = URI.create(finikConfig.getBaseUrl() + "/v1/payment");
 
@@ -202,15 +203,10 @@ public class PaymentService {
 
     /**
      * Returns true if payment should be confirmed.
-     * Test mode (SMS disabled): auto-confirms always.
-     * Production: checks DB for webhook update — Finik does not expose a status polling API.
-     * Payment is confirmed only if webhook already set a real transactionId (non-TXN_ prefix).
+     * Checks DB for webhook update — Finik does not expose a status polling API.
+     * Mock QR (TXN_ prefix) auto-confirms for dev/test purposes.
      */
     private boolean finikConfirmPayment(Payment payment) {
-        if (!smsEnabled) {
-            log.info("Test mode: auto-confirming payment {}", payment.getId());
-            return true;
-        }
         if (payment.getFinikTransactionId() != null
                 && payment.getFinikTransactionId().startsWith("TXN_")) {
             log.info("Mock QR: auto-confirming payment {}", payment.getId());

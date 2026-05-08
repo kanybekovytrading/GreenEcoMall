@@ -14,6 +14,7 @@ public class FinikConfig {
     private String baseUrl;
     private String privateKeyPath;
     private String webhookUrl;
+    private String redirectUrl;
     private String merchantCategoryCode = "0742";
     private String qrNameEn = "GreenEcoMall";
 }

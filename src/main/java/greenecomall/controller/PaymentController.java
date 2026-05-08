@@ -95,7 +95,6 @@ public class PaymentController {
                 "activated", "SUCCESS".equals(p.getStatus().name())
         )));
     }
-
     @Operation(summary = "Webhook от Finik (системный)",
             description = """
                     Вызывается платёжной системой Finik после успешной оплаты.
