@@ -13,7 +13,8 @@ import java.util.UUID;
 
 public interface TreePositionRepository extends JpaRepository<TreePosition, UUID> {
 
-    Optional<TreePosition> findByUserAndLevelAndStage(User user, int level, int stage);
+    @Query("SELECT tp FROM TreePosition tp WHERE tp.user = :user AND tp.level = :level AND tp.stage = :stage AND tp.isAccelerator = false")
+    Optional<TreePosition> findByUserAndLevelAndStage(@Param("user") User user, @Param("level") int level, @Param("stage") int stage);
 
     List<TreePosition> findByParentAndLevelAndStage(User parent, int level, int stage);
 
