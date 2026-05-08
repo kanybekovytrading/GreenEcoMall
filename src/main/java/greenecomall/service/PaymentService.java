@@ -90,7 +90,6 @@ public class PaymentService {
             String paymentUrl = callFinikCreatePayment(payment.getId(), payment.getAmount());
 
             payment.setFinikQrCode(paymentUrl);
-            payment.setFinikTransactionId(payment.getId().toString());
             payment.setExpiresAt(expiresAt);
             paymentRepository.save(payment);
 
