@@ -44,7 +44,7 @@ app:
 
 sms:
   smspro:
-    enabled: true
+    enabled: false
     url: ${SMSPRO_URL:https://smspro.nikita.kg/api/message}
     login: Cholpon123456
     password: 6EX5vJf8
