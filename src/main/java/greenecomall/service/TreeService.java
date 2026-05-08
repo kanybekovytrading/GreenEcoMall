@@ -690,16 +690,15 @@ public class TreeService {
                     .sorted(Comparator.comparingInt(TreePosition::getPosition))
                     .forEach(child -> {
                         TreePosition childPos = child;
+                        boolean accel = childPos.getIsAccelerator();
                         childNodes.add(TreeNodeResponse.builder()
-                                .userId(childPos.getUser().getId())
-                                .name(childPos.getUser().getFirstName() + " " + childPos.getUser().getLastName())
-                                .initials(initials(childPos.getUser()))
+                                .userId(accel ? null : childPos.getUser().getId())
+                                .name(accel ? null : childPos.getUser().getFirstName() + " " + childPos.getUser().getLastName())
+                                .initials(accel ? null : initials(childPos.getUser()))
                                 .position(childPos.getPosition())
-                                .isAccelerator(childPos.getIsAccelerator())
+                                .isAccelerator(accel)
                                 .stageStatus(childPos.getStageStatus())
-                                .children(childPos.getIsAccelerator()
-                                        ? List.of()
-                                        : buildNode(childPos.getUser(), level, stage, depth - 1).children())
+                                .children(accel ? List.of() : buildNode(childPos.getUser(), level, stage, depth - 1).children())
                                 .build());
                     });
         }
