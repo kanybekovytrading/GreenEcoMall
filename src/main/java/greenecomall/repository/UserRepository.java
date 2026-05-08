@@ -33,4 +33,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
 
     @Query("SELECT u.currentLevel, COUNT(u) FROM User u WHERE u.accountStatus = 'ACTIVE' GROUP BY u.currentLevel ORDER BY u.currentLevel")
     List<Object[]> countByCurrentLevel();
+
+    boolean existsByFixedPartnerLeft(User user);
+    boolean existsByFixedPartnerRight(User user);
 }

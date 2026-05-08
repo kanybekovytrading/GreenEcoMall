@@ -214,6 +214,55 @@ public class TreeService {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
+     * For all active users who completed Stage 1 (currentStage >= 2) but are not yet placed
+     * as anyone's fixedPartnerLeft/Right, re-runs fillStage2UnderInviter.
+     */
+    @Transactional
+    public List<String> repairStage2Placements() {
+        List<String> report = new ArrayList<>();
+
+        List<User> candidates = userRepository.findAll().stream()
+                .filter(u -> u.getAccountStatus() == greenecomall.enums.AccountStatus.ACTIVE)
+                .filter(u -> u.getCurrentStage() >= 2)
+                .filter(u -> !userRepository.existsByFixedPartnerLeft(u)
+                          && !userRepository.existsByFixedPartnerRight(u))
+                .toList();
+
+        for (User user : candidates) {
+            int level = user.getCurrentLevel();
+            User ancestor = findFirstStage2Ancestor(user, level);
+            if (ancestor == null) {
+                report.add("NO_ANCESTOR: " + user.getFirstName() + " " + user.getLastName()
+                        + " (id=" + user.getId() + ") — нет предка на Stage 2");
+                continue;
+            }
+            User locked = userRepository.findByIdForUpdate(ancestor.getId()).orElse(null);
+            if (locked == null || locked.getCurrentStage() != 2) {
+                report.add("SKIP: " + user.getFirstName() + " — предок уже прошёл Stage 2");
+                continue;
+            }
+            if (locked.getFixedPartnerLeft() == null) {
+                locked.setFixedPartnerLeft(user);
+                userRepository.save(locked);
+                report.add("PLACED_LEFT: " + user.getFirstName() + " " + user.getLastName()
+                        + " → " + locked.getFirstName() + " " + locked.getLastName());
+                if (locked.getFixedPartnerRight() != null) onStage2Completed(locked, level);
+            } else if (locked.getFixedPartnerRight() == null) {
+                locked.setFixedPartnerRight(user);
+                userRepository.save(locked);
+                report.add("PLACED_RIGHT: " + user.getFirstName() + " " + user.getLastName()
+                        + " → " + locked.getFirstName() + " " + locked.getLastName());
+                onStage2Completed(locked, level);
+            } else {
+                report.add("FULL: " + locked.getFirstName() + " уже заполнен, " + user.getFirstName() + " не размещён");
+            }
+        }
+
+        if (report.isEmpty()) report.add("Все позиции Stage 2 в порядке");
+        return report;
+    }
+
+    /**
      * Finds all active users who have an inviter but no TreePosition at the inviter's current level,
      * and places them in the tree using BFS. Returns a report of what was fixed.
      */
@@ -409,27 +458,30 @@ public class TreeService {
     }
 
     /**
-     * Walks UP the Stage-1 tree_positions parent chain to find the nearest ancestor
-     * who is currently on Stage 2 at the given level.
-     * This ensures tier-2+ completers bubble up past nodes that are still on Stage 1.
+     * Walks UP the Stage-1 tree_positions parent chain and returns the TOPMOST ancestor
+     * currently on Stage 2. This ensures that when a tier-2+ completer bubbles up, they
+     * fill the root's Stage 2 slot first — not an intermediate node that just moved to Stage 2.
+     * Only after the root's Stage 2 is full will lower ancestors receive completers.
      */
     private User findFirstStage2Ancestor(User user, int level) {
         Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(user, level, 1);
         if (pos.isEmpty() || pos.get().getParent() == null) return null;
 
+        User topmost = null;
         User parent = pos.get().getParent();
         while (parent != null) {
             User fresh = userRepository.findById(parent.getId()).orElse(null);
             if (fresh == null) break;
 
-            if (fresh.getCurrentLevel() == level && fresh.getCurrentStage() == 2) return fresh;
+            if (fresh.getCurrentLevel() == level && fresh.getCurrentStage() == 2) {
+                topmost = fresh; // keep going — maybe there's an even higher ancestor on Stage 2
+            }
 
-            // Ancestor already past Stage 2 or on a different level — keep walking up
             Optional<TreePosition> parentPos = treePositionRepo.findByUserAndLevelAndStage(fresh, level, 1);
             if (parentPos.isEmpty() || parentPos.get().getParent() == null) break;
             parent = parentPos.get().getParent();
         }
-        return null;
+        return topmost;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
