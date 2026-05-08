@@ -7,6 +7,7 @@ import greenecomall.entity.User;
 import greenecomall.entity.Withdrawal;
 import greenecomall.service.AuthService;
 import greenecomall.service.PaymentService;
+import greenecomall.service.TreeService;
 import greenecomall.enums.AccountStatus;
 import greenecomall.enums.WithdrawalStatus;
 import greenecomall.exception.BusinessException;
@@ -46,6 +47,7 @@ public class AdminController {
     private final BonusRepository bonusRepository;
     private final AuthService authService;
     private final PaymentService paymentService;
+    private final TreeService treeService;
 
     @Operation(summary = "Список пользователей",
             description = "Возвращает всех пользователей с пагинацией.")
@@ -174,6 +176,18 @@ public class AdminController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"users.csv\"")
                 .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
                 .body(bytes);
+    }
+
+    @Operation(summary = "Восстановить позиции в дереве",
+            description = """
+                    Находит всех активных участников у которых есть inviter_id, но нет записи в tree_positions.
+                    Размещает их в дерево через BFS. Используй если участники активные но не видны в дереве.
+                    Возвращает список что было исправлено.
+                    """)
+    @PostMapping("/repair/tree-positions")
+    public ResponseEntity<ApiResponse<List<String>>> repairTreePositions() {
+        List<String> report = treeService.repairMissingPositions();
+        return ResponseEntity.ok(ApiResponse.ok(report));
     }
 
     private String escape(String value) {

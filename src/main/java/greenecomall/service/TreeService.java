@@ -47,10 +47,15 @@ public class TreeService {
         int level = inviter.getCurrentLevel();
         User directParent = bfsPlace(inviter, newUser, level, 1);
 
+        if (directParent == null) {
+            throw new IllegalStateException(
+                    "BFS could not place user " + newUser.getId() + " in inviter " + inviter.getId() + " tree");
+        }
+
         // Check Stage 1 completion for the placement node and up to 2 ancestors —
         // covers: directParent's own matrix (newUser = tier 1) and
         // directParent's parent's matrix (newUser = tier 2).
-        checkStage1UpTheChain(directParent != null ? directParent : inviter, level);
+        checkStage1UpTheChain(directParent, level);
 
         String msg = newUser.getFirstName() + " " + newUser.getLastName() + " присоединился к вашей команде";
 
@@ -202,6 +207,44 @@ public class TreeService {
                     "Вы стали Акционером!",
                     "Поздравляем! Вы достигли вершины и теперь получаете дивиденды.");
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ADMIN: REPAIR
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Finds all active users who have an inviter but no TreePosition at the inviter's current level,
+     * and places them in the tree using BFS. Returns a report of what was fixed.
+     */
+    @Transactional
+    public List<String> repairMissingPositions() {
+        List<String> report = new ArrayList<>();
+
+        List<User> activeUsers = userRepository.findAll().stream()
+                .filter(u -> u.getAccountStatus() == greenecomall.enums.AccountStatus.ACTIVE)
+                .filter(u -> u.getInviter() != null)
+                .toList();
+
+        for (User user : activeUsers) {
+            User inviter = userRepository.findById(user.getInviter().getId()).orElse(null);
+            if (inviter == null) continue;
+
+            int level = inviter.getCurrentLevel();
+            boolean hasPosition = treePositionRepo.findByUserAndLevelAndStage(user, level, 1).isPresent();
+            if (!hasPosition) {
+                User placed = bfsPlace(inviter, user, level, 1);
+                if (placed != null) {
+                    report.add("PLACED: user=" + user.getId() + " (" + user.getFirstName() + " " + user.getLastName()
+                            + ") under parent=" + placed.getId() + " level=" + level);
+                } else {
+                    report.add("FAILED: user=" + user.getId() + " — no free BFS slot found");
+                }
+            }
+        }
+
+        if (report.isEmpty()) report.add("No missing positions found");
+        return report;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -553,6 +596,11 @@ public class TreeService {
 
     @Transactional(readOnly = true)
     public TreeResponse getTree(User user, int level, int stage) {
+        // Stage 2 and 4 partners are stored as fixedPartnerLeft/Right on User, not in tree_positions
+        if (stage == 2 || stage == 4) {
+            return buildFixedPartnersTree(user, level, stage);
+        }
+
         TreePosition rootPos = treePositionRepo.findByUserAndLevelAndStage(user, level, stage).orElse(null);
         StageStatus status = rootPos != null ? rootPos.getStageStatus() : StageStatus.WAITING;
 
@@ -566,18 +614,8 @@ public class TreeService {
                 treePositionRepo.findByParentAndLevelAndStage(c.getUser(), level, stage)
                         .stream().anyMatch(TreePosition::getIsAccelerator));
 
-        // Stage 1 Level 1: infinite depth (BFS tree grows without limit)
-        // Stage 2 while still on Stage 2: only 2 direct partners visible
-        // Everything else: 6 people max (root + 2 tiers)
-        int depth;
-        boolean isCurrentStage = user.getCurrentLevel() == level && user.getCurrentStage() == stage;
-        if (stage == 1 && level == 1) {
-            depth = 20;
-        } else if ((stage == 2 || stage == 4) && isCurrentStage) {
-            depth = 2; // ожидаем только 2 партнёров
-        } else {
-            depth = 3; // история или этапы 3 — показываем 6
-        }
+        // Stage 1 Level 1: infinite BFS tree; everything else: up to 6 (2 tiers)
+        int depth = (stage == 1 && level == 1) ? 20 : 3;
 
         TreeNodeResponse rootNode = buildNode(user, level, stage, depth);
 
@@ -586,6 +624,59 @@ public class TreeService {
                 .stageStatus(status)
                 .progress(TreeResponse.TreeProgress.builder().filled(filled).total(6).build())
                 .accelerator(TreeResponse.AcceleratorInfo.builder().active(hasAccelerator).build())
+                .build();
+    }
+
+    private TreeResponse buildFixedPartnersTree(User user, int level, int stage) {
+        User left  = userRepository.findById(
+                user.getFixedPartnerLeft()  != null ? user.getFixedPartnerLeft().getId()  : user.getId())
+                .filter(u -> user.getFixedPartnerLeft() != null).orElse(null);
+        User right = userRepository.findById(
+                user.getFixedPartnerRight() != null ? user.getFixedPartnerRight().getId() : user.getId())
+                .filter(u -> user.getFixedPartnerRight() != null).orElse(null);
+
+        List<TreeNodeResponse> children = new ArrayList<>();
+        if (left != null) {
+            children.add(TreeNodeResponse.builder()
+                    .userId(left.getId())
+                    .name(left.getFirstName() + " " + left.getLastName())
+                    .initials(initials(left))
+                    .position(1)
+                    .isAccelerator(false)
+                    .stageStatus(left.getCurrentStage() > stage ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
+                    .children(List.of())
+                    .build());
+        }
+        if (right != null) {
+            children.add(TreeNodeResponse.builder()
+                    .userId(right.getId())
+                    .name(right.getFirstName() + " " + right.getLastName())
+                    .initials(initials(right))
+                    .position(2)
+                    .isAccelerator(false)
+                    .stageStatus(right.getCurrentStage() > stage ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
+                    .children(List.of())
+                    .build());
+        }
+
+        int filled = children.size();
+        boolean isCurrentStage = user.getCurrentLevel() == level && user.getCurrentStage() == stage;
+        StageStatus status = user.getCurrentStage() > stage ? StageStatus.COMPLETED
+                : isCurrentStage ? StageStatus.IN_PROGRESS : StageStatus.WAITING;
+
+        TreeNodeResponse rootNode = TreeNodeResponse.builder()
+                .userId(user.getId())
+                .name(user.getFirstName() + " " + user.getLastName())
+                .initials(initials(user))
+                .stageStatus(status)
+                .children(children)
+                .build();
+
+        return TreeResponse.builder()
+                .root(rootNode)
+                .stageStatus(status)
+                .progress(TreeResponse.TreeProgress.builder().filled(filled).total(2).build())
+                .accelerator(TreeResponse.AcceleratorInfo.builder().active(false).build())
                 .build();
     }
 
