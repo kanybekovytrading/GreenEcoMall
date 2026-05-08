@@ -375,40 +375,61 @@ public class TreeService {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * When user completes Stage 1 they move under their DIRECT inviter on Stage 2.
-     * Level 1 — RACE: first finisher → left, second → right.
-     * Levels 2-4 — FIXED: the same two partners are placed automatically (no race).
+     * When user completes Stage 1 they fill a Stage 2 slot under the closest ancestor
+     * in the tree who is currently on Stage 2. Walks UP the tree_positions parent chain
+     * so tier-2+ completers correctly bubble up past intermediate nodes.
      */
     private void fillStage2UnderInviter(User user, int level) {
-        if (user.getInviter() == null) return;
+        User ancestor = findFirstStage2Ancestor(user, level);
+        if (ancestor == null) return;
 
-        UUID inviterId = user.getInviter().getId();
-        User inviter = userRepository.findByIdForUpdate(inviterId)
-                .orElseThrow(() -> new IllegalStateException("Inviter not found: " + inviterId));
+        User locked = userRepository.findByIdForUpdate(ancestor.getId())
+                .orElseThrow(() -> new IllegalStateException("Stage2 ancestor not found: " + ancestor.getId()));
 
-        // Inviter must be on Stage 2 to receive a partner
-        if (inviter.getCurrentStage() != 2 || inviter.getCurrentLevel() != level) return;
+        if (locked.getCurrentStage() != 2 || locked.getCurrentLevel() != level) return;
 
-        if (inviter.getFixedPartnerLeft() == null) {
-            inviter.setFixedPartnerLeft(user);
-            userRepository.save(inviter);
+        if (locked.getFixedPartnerLeft() == null) {
+            locked.setFixedPartnerLeft(user);
+            userRepository.save(locked);
 
-            notificationService.send(inviter, NotificationType.NEW_MEMBER,
+            notificationService.send(locked, NotificationType.NEW_MEMBER,
                     "Этап 2 — левая позиция занята",
                     user.getFirstName() + " " + user.getLastName() + " встал на Этап 2 (слева)");
 
-        } else if (inviter.getFixedPartnerRight() == null) {
-            inviter.setFixedPartnerRight(user);
-            userRepository.save(inviter);
+        } else if (locked.getFixedPartnerRight() == null) {
+            locked.setFixedPartnerRight(user);
+            userRepository.save(locked);
 
-            notificationService.send(inviter, NotificationType.NEW_MEMBER,
+            notificationService.send(locked, NotificationType.NEW_MEMBER,
                     "Этап 2 — правая позиция занята",
                     user.getFirstName() + " " + user.getLastName() + " встал на Этап 2 (справа)");
 
-            // Both slots filled — Stage 2 is done
-            onStage2Completed(inviter, level);
+            onStage2Completed(locked, level);
         }
-        // If both slots already filled — do nothing (inviter already beyond Stage 2)
+    }
+
+    /**
+     * Walks UP the Stage-1 tree_positions parent chain to find the nearest ancestor
+     * who is currently on Stage 2 at the given level.
+     * This ensures tier-2+ completers bubble up past nodes that are still on Stage 1.
+     */
+    private User findFirstStage2Ancestor(User user, int level) {
+        Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(user, level, 1);
+        if (pos.isEmpty() || pos.get().getParent() == null) return null;
+
+        User parent = pos.get().getParent();
+        while (parent != null) {
+            User fresh = userRepository.findById(parent.getId()).orElse(null);
+            if (fresh == null) break;
+
+            if (fresh.getCurrentLevel() == level && fresh.getCurrentStage() == 2) return fresh;
+
+            // Ancestor already past Stage 2 or on a different level — keep walking up
+            Optional<TreePosition> parentPos = treePositionRepo.findByUserAndLevelAndStage(fresh, level, 1);
+            if (parentPos.isEmpty() || parentPos.get().getParent() == null) break;
+            parent = parentPos.get().getParent();
+        }
+        return null;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
