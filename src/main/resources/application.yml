@@ -25,7 +25,7 @@ jwt:
   refresh-token-expiration: 2592000000  # 30 days
 
 app:
-  base-url: ${APP_BASE_URL:https://greenecomall.up.railway.app}
+  base-url: ${APP_BASE_URL:https://greenecomall-dev.up.railway.app}
   admin:
     phone: ${ADMIN_PHONE:+996700000000}
     password: ${ADMIN_PASSWORD:admin123}
@@ -36,11 +36,11 @@ app:
   payment:
     qr-expiration-minutes: 30
   finik:
-    api-key: LOlnU70w7LtRpBZ5HAxLaVatjIXQLGS9xmeSmWM4
-    account-id: d54479fa-bea8-4762-ba96-6ec8b1eaea26
-    private-key-path: classpath:workkg.pem
+    api-key: 0c0z3IkpXz294LV7YslMK2PIqrQtCGcR4mDXPyq8
+    account-id: 717233df-1a6b-4f5d-ba95-2d311eb8d302
+    private-key-path: classpath:private_key.pem
     base-url: https://api.acquiring.averspay.kg
-    webhook-url: https://greenecomall.up.railway.app/api/payment/webhook
+    webhook-url: https://greenecomall-dev.up.railway.app/api/payment/webhook
 
 sms:
   smspro:

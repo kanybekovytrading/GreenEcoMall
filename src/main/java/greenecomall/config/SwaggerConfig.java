@@ -113,7 +113,7 @@ public class SwaggerConfig {
                                 | 4 | оба партнёра на Этапе 4 | → следующий уровень |
                                 """))
                 .servers(List.of(
-                        new Server().url("https://greenecomall.up.railway.app").description("Dev")))
+                        new Server().url("https://greenecomall-dev.up.railway.app").description("Dev")))
                 .tags(List.of(
                         new Tag().name("1. Auth").description("Регистрация и вход — начни здесь"),
                         new Tag().name("2. Payment").description("Оплата вступительного взноса"),
