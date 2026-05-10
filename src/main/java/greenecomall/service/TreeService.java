@@ -1213,17 +1213,22 @@ public class TreeService {
                 .findFirst();
 
         if (directOpt.isPresent()) {
-            // BFS вглубь без ограничений
+            // BFS вглубь без ограничений; ускорители пропускаем —
+            // у них user = root, что сломало бы обход всего дерева
             Queue<User> queue = new ArrayDeque<>();
             Set<UUID> visited = new HashSet<>();
-            queue.add(directOpt.get().getUser());
-            members.add(toBranchMember(directOpt.get()));
-            visited.add(directOpt.get().getUser().getId());
+
+            TreePosition direct = directOpt.get();
+            if (!direct.getIsAccelerator()) {
+                queue.add(direct.getUser());
+                members.add(toBranchMember(direct));
+                visited.add(direct.getUser().getId());
+            }
 
             while (!queue.isEmpty()) {
                 User current = queue.poll();
                 for (TreePosition child : treePositionRepo.findByParentAndLevelAndStage(current, level, 1)) {
-                    if (visited.add(child.getUser().getId())) {
+                    if (!child.getIsAccelerator() && visited.add(child.getUser().getId())) {
                         members.add(toBranchMember(child));
                         queue.add(child.getUser());
                     }
