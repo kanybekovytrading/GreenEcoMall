@@ -3,6 +3,8 @@ package greenecomall.entity;
 import greenecomall.enums.AccountStatus;
 import greenecomall.enums.RegistrationPlan;
 import greenecomall.enums.Role;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -18,6 +20,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class User {
 
     @Id
@@ -45,6 +48,7 @@ public class User {
     // Finik номер для вывода средств (сохраняется в профиле)
     private String finikPhone;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "inviter_id")
     private User inviter;
@@ -66,10 +70,12 @@ public class User {
     @Column(nullable = false)
     private Integer currentStage;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "fixed_partner_left_id")
     private User fixedPartnerLeft;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "fixed_partner_right_id")
     private User fixedPartnerRight;
