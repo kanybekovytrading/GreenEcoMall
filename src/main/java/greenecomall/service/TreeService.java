@@ -751,7 +751,7 @@ public class TreeService {
                     .position(1)
                     .isAccelerator(false)
                     .stageStatus(left.getCurrentStage() > stage ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
-                    .children(List.of())
+                    .children(buildNode(left, level, 1, 20).children())
                     .build());
         }
         if (right != null) {
@@ -762,7 +762,7 @@ public class TreeService {
                     .position(2)
                     .isAccelerator(false)
                     .stageStatus(right.getCurrentStage() > stage ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
-                    .children(List.of())
+                    .children(buildNode(right, level, 1, 20).children())
                     .build());
         }
 
