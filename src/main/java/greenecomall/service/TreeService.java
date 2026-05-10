@@ -16,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -489,41 +488,64 @@ public class TreeService {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Places a virtual accelerator in the WEAKER branch of user's Stage-1 tree.
-     * Only for Levels 1 and 2. Counts existing positions (including accelerators)
-     * to determine which branch is weaker.
+     * Places a virtual accelerator in user's Stage-1 tree.
+     * Only for Levels 1 and 2.
+     *
+     * Priority: if any branch already has an accelerator → stack into that branch.
+     * Otherwise: place in the weaker (smaller) branch.
      */
     @Transactional
     public void placeAccelerator(User user, int level) {
-        int leftSize  = branchSize(user, level, 1);
-        int rightSize = branchSize(user, level, 2);
-
-        int weakSide = (leftSize <= rightSize) ? 1 : 2;
-
         List<TreePosition> directChildren = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
-        Optional<TreePosition> weakDirectChild = directChildren.stream()
-                .filter(c -> c.getPosition() == weakSide)
-                .findFirst();
 
-        if (weakDirectChild.isEmpty()) {
-            // The direct slot itself is empty — place accelerator right under root
-            treePositionRepo.save(TreePosition.builder()
-                    .user(user)
-                    .parent(user)
-                    .level(level)
-                    .stage(1)
-                    .position(weakSide)
-                    .isAccelerator(true)
-                    .stageStatus(StageStatus.IN_PROGRESS)
-                    .build());
+        // Find the branch that already has the most accelerators (stack there)
+        Optional<User> stackBranch = directChildren.stream()
+                .filter(c -> !c.getIsAccelerator())
+                .filter(c -> countAcceleratorsInSubTree(c.getUser(), level) > 0)
+                .max(Comparator.comparingInt(c -> countAcceleratorsInSubTree(c.getUser(), level)))
+                .map(TreePosition::getUser);
+
+        if (stackBranch.isPresent()) {
+            bfsPlaceAccelerator(user, stackBranch.get(), level);
         } else {
-            // Find first free slot inside the weak branch via BFS
-            bfsPlaceAccelerator(user, weakDirectChild.get().getUser(), level);
+            // No existing accelerators — place in the weaker branch
+            int leftSize  = branchSize(user, level, 1);
+            int rightSize = branchSize(user, level, 2);
+            int weakSide  = (leftSize <= rightSize) ? 1 : 2;
+
+            Optional<TreePosition> weakDirectChild = directChildren.stream()
+                    .filter(c -> c.getPosition() == weakSide)
+                    .findFirst();
+
+            if (weakDirectChild.isEmpty()) {
+                treePositionRepo.save(TreePosition.builder()
+                        .user(user).parent(user).level(level).stage(1)
+                        .position(weakSide).isAccelerator(true)
+                        .stageStatus(StageStatus.IN_PROGRESS).build());
+            } else {
+                bfsPlaceAccelerator(user, weakDirectChild.get().getUser(), level);
+            }
         }
 
         notificationService.send(user, NotificationType.ACCELERATOR_PLACED,
                 "Ускоритель размещён",
-                "Система автоматически разместила ускоритель в слабую ветку вашей команды.");
+                "Система автоматически разместила ускоритель в команду.");
+    }
+
+    private int countAcceleratorsInSubTree(User root, int level) {
+        int count = 0;
+        Set<UUID> visited = new HashSet<>();
+        Queue<User> queue = new ArrayDeque<>();
+        queue.add(root);
+        while (!queue.isEmpty()) {
+            User cur = queue.poll();
+            if (!visited.add(cur.getId())) continue;
+            for (TreePosition child : treePositionRepo.findByParentAndLevelAndStage(cur, level, 1)) {
+                if (child.getIsAccelerator()) count++;
+                else queue.add(child.getUser());
+            }
+        }
+        return count;
     }
 
     private void bfsPlaceAccelerator(User owner, User branchRoot, int level) {
@@ -559,14 +581,26 @@ public class TreeService {
     }
 
     /**
-     * Removes accelerator when the user it is under completes Stage 1.
+     * Removes ALL accelerators within user's entire Stage-1 sub-tree (recursive).
+     * Called when user completes Stage 1 — accelerators have served their purpose.
      */
     @Transactional
     public void removeAcceleratorsUnder(User user, int level) {
-        treePositionRepo.findByParentAndLevelAndStage(user, level, 1)
-                .stream()
-                .filter(TreePosition::getIsAccelerator)
-                .forEach(treePositionRepo::delete);
+        Set<UUID> visited = new HashSet<>();
+        Queue<User> queue = new ArrayDeque<>();
+        queue.add(user);
+        while (!queue.isEmpty()) {
+            User cur = queue.poll();
+            if (!visited.add(cur.getId())) continue;
+            List<TreePosition> children = treePositionRepo.findByParentAndLevelAndStage(cur, level, 1);
+            for (TreePosition child : children) {
+                if (child.getIsAccelerator()) {
+                    treePositionRepo.delete(child);
+                } else {
+                    queue.add(child.getUser());
+                }
+            }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
