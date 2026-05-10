@@ -52,8 +52,8 @@ sms:
     sender: BilgirimKG
 
 telegram:
-  bot-token: ${TELEGRAM_BOT_TOKEN:}
-  dev-chat-id: ${TELEGRAM_DEV_CHAT_ID:}
+  bot-token: ${TELEGRAM_BOT_TOKEN:8681208071:AAFmF6OFuS8YgQJ87_a0sA733AP4xFKTA68}
+  dev-chat-id: ${TELEGRAM_DEV_CHAT_ID:7838639205}
 
 
 logging:
