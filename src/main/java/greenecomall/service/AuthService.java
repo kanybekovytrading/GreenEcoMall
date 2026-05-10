@@ -107,6 +107,7 @@ public class AuthService {
                 .accountStatus(AccountStatus.PENDING)
                 .currentLevel(startingLevel)
                 .currentStage(1)
+                .registrationPlan(plan)
                 .build();
 
         user = userRepository.save(user);

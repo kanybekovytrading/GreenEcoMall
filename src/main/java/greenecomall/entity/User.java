@@ -1,6 +1,7 @@
 package greenecomall.entity;
 
 import greenecomall.enums.AccountStatus;
+import greenecomall.enums.RegistrationPlan;
 import greenecomall.enums.Role;
 import jakarta.persistence.*;
 import lombok.*;
@@ -51,6 +52,9 @@ public class User {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Role role;
+
+    @Enumerated(EnumType.STRING)
+    private RegistrationPlan registrationPlan;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

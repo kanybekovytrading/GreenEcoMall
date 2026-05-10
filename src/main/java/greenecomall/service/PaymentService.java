@@ -303,18 +303,23 @@ public class PaymentService {
         locked.setActivatedAt(LocalDateTime.now());
         userRepository.save(locked);
 
-        User inviter = locked.getInviter();
-        if (inviter != null) {
-            treeService.placeNewUser(inviter, locked);
+        if (locked.getRegistrationPlan() == greenecomall.enums.RegistrationPlan.FAST_START) {
+            // Fast Start: placed in the shared Fast Start queue, not under inviter
+            treeService.placeNewFastStartUser(locked);
+        } else {
+            User inviter = locked.getInviter();
+            if (inviter != null) {
+                treeService.placeNewUser(inviter, locked);
 
-            notificationService.send(inviter, NotificationType.NEW_MEMBER,
-                    "Новый участник",
-                    locked.getFirstName() + " " + locked.getLastName() + " активировал аккаунт");
+                notificationService.send(inviter, NotificationType.NEW_MEMBER,
+                        "Новый участник",
+                        locked.getFirstName() + " " + locked.getLastName() + " активировал аккаунт");
+            }
+
+            notificationService.send(locked, NotificationType.NEW_MEMBER,
+                    "Аккаунт активирован",
+                    "Добро пожаловать в Green Eco Mall! Ваш аккаунт успешно активирован.");
         }
-
-        notificationService.send(locked, NotificationType.NEW_MEMBER,
-                "Аккаунт активирован",
-                "Добро пожаловать в Green Eco Mall! Ваш аккаунт успешно активирован.");
     }
 
     private String extractPaymentId(WebhookData webhook) {

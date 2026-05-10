@@ -6,6 +6,7 @@ import greenecomall.dto.response.TreeResponse;
 import greenecomall.entity.TreePosition;
 import greenecomall.entity.User;
 import greenecomall.enums.NotificationType;
+import greenecomall.enums.RegistrationPlan;
 import greenecomall.enums.StageStatus;
 import greenecomall.repository.TreePositionRepository;
 import greenecomall.repository.UserRepository;
@@ -69,6 +70,37 @@ public class TreeService {
                     "Новый участник в вашей ветке",
                     newUser.getFirstName() + " " + newUser.getLastName() + " занял позицию под вами");
         }
+    }
+
+    /**
+     * Fast Start placement: finds the oldest waiting Fast Start user (level=2, stage=1, 0 children)
+     * and places newUser under them. If no one is waiting — newUser becomes the first in queue.
+     */
+    @Transactional
+    public void placeNewFastStartUser(User newUser) {
+        List<User> candidates = userRepository.findFastStartUsersAtStage1(RegistrationPlan.FAST_START);
+
+        User waitingHost = candidates.stream()
+                .filter(c -> !c.getId().equals(newUser.getId()))
+                .filter(c -> treePositionRepo.countByParentAndLevelAndStage(c, 2, 1) == 0)
+                .findFirst()
+                .orElse(null);
+
+        if (waitingHost != null) {
+            savePosition(newUser, waitingHost, 2, 1, 1);
+            checkStage1Completion(waitingHost, 2);
+
+            notificationService.send(waitingHost, NotificationType.NEW_MEMBER,
+                    "Быстрый Старт",
+                    newUser.getFirstName() + " " + newUser.getLastName() + " встал под вас — Этап 1 завершён!");
+        }
+        // If no waiting host, newUser is first in queue — no tree position yet, waits for next Fast Start user.
+
+        notificationService.send(newUser, NotificationType.NEW_MEMBER,
+                "Аккаунт активирован",
+                waitingHost != null
+                        ? "Вы размещены в команду Быстрого Старта!"
+                        : "Вы в очереди Быстрого Старта. Ждём следующего участника.");
     }
 
     /**
@@ -370,6 +402,18 @@ public class TreeService {
         User fresh = userRepository.findById(root.getId()).orElse(root);
         if (fresh.getCurrentLevel() != level || fresh.getCurrentStage() != 1) return;
 
+        boolean isFastStart = fresh.getRegistrationPlan() == RegistrationPlan.FAST_START;
+
+        if (isFastStart) {
+            // Fast Start: needs only 1 person to complete Stage 1
+            int count = treePositionRepo.countByParentAndLevelAndStage(fresh, level, 1);
+            if (count >= 1) {
+                onStage1Completed(fresh, level);
+            }
+            return;
+        }
+
+        // Standard: needs 6 positions (2 tiers)
         int tier1 = treePositionRepo.countByParentAndLevelAndStage(fresh, level, 1);
         if (tier1 < 2) return;
 
@@ -693,7 +737,17 @@ public class TreeService {
      * Returns true if all 6 members in root's Stage-1 tree have currentStage >= minStage.
      */
     private boolean allSixMembersAtStage(User root, int level, int minStage) {
+        boolean isFastStart = root.getRegistrationPlan() == RegistrationPlan.FAST_START;
+
         List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(root, level, 1);
+
+        if (isFastStart) {
+            // Fast Start: Stage 3 completes when the 1 member reaches the required stage
+            if (tier1.isEmpty()) return false;
+            return tier1.get(0).getUser().getCurrentStage() >= minStage;
+        }
+
+        // Standard: all 6 members (2 tiers) must reach minStage
         if (tier1.size() < 2) return false;
 
         for (TreePosition t1 : tier1) {

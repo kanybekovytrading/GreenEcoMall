@@ -2,6 +2,7 @@ package greenecomall.repository;
 
 import greenecomall.entity.User;
 import greenecomall.enums.AccountStatus;
+import greenecomall.enums.RegistrationPlan;
 import greenecomall.enums.Role;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -36,4 +37,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
 
     boolean existsByFixedPartnerLeft(User user);
     boolean existsByFixedPartnerRight(User user);
+
+    @Query("SELECT u FROM User u WHERE u.registrationPlan = :plan AND u.currentLevel = 2 AND u.currentStage = 1 AND u.accountStatus = 'ACTIVE' ORDER BY u.activatedAt ASC")
+    List<User> findFastStartUsersAtStage1(@Param("plan") RegistrationPlan plan);
 }
