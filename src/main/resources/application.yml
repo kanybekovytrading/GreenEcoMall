@@ -51,6 +51,10 @@ sms:
     password: 6Jf8
     sender: BilgirimKG
 
+telegram:
+  bot-token: ${TELEGRAM_BOT_TOKEN:}
+  dev-chat-id: ${TELEGRAM_DEV_CHAT_ID:}
+
 
 logging:
   level:

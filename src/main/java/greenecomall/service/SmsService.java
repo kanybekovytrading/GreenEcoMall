@@ -46,6 +46,12 @@ public class SmsService {
     @Value("${app.otp.max-requests-per-hour:5}")
     private int maxPerHour;
 
+    @Value("${telegram.bot-token:}")
+    private String telegramBotToken;
+
+    @Value("${telegram.dev-chat-id:}")
+    private String telegramDevChatId;
+
     /**
      * Generates OTP, persists it, sends SMS. Returns the OtpCode's expiresAt.
      * Throws BusinessException on rate limit or SMS failure.
@@ -72,7 +78,7 @@ public class SmsService {
         otpCodeRepository.save(otp);
 
         if (!enabled) {
-            log.warn("[SMS TEST MODE] Phone: {} OTP: {}", formatted, code);
+            sendViaTelegram(formatted, code);
             return exp;
         }
 
@@ -81,6 +87,26 @@ public class SmsService {
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
+
+    private void sendViaTelegram(String phone, String code) {
+        if (telegramBotToken.isBlank() || telegramDevChatId.isBlank()) {
+            log.warn("[OTP] Telegram not configured. Phone: {} Code: {}", phone, code);
+            return;
+        }
+        String url = "https://api.telegram.org/bot" + telegramBotToken + "/sendMessage";
+        String text = "🔐 GreenEcoMall OTP\n\nНомер: " + phone + "\nКод: *" + code + "*\n\nДействует 5 минут.";
+        String body = "{\"chat_id\":\"" + telegramDevChatId + "\",\"text\":\"" + text + "\",\"parse_mode\":\"Markdown\"}";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        try {
+            ResponseEntity<String> resp = restTemplate.exchange(
+                    url, HttpMethod.POST, new HttpEntity<>(body, headers), String.class);
+            log.info("Telegram OTP sent for {}. Response: {}", phone, resp.getBody());
+        } catch (Exception e) {
+            log.error("Telegram send failed for {}: {}", phone, e.getMessage());
+        }
+    }
 
     private void sendViaSmsProApi(String phone, String code) {
         String messageId = "OTP" + System.currentTimeMillis();
