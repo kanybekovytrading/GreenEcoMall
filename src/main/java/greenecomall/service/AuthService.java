@@ -38,7 +38,8 @@ public class AuthService {
     private final SmsService smsService;
 
     private static final String REFERRAL_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    private static final BigDecimal ENTRY_FEE = new BigDecimal("1");
+    private static final BigDecimal FEE_STANDARD   = new BigDecimal("10000");
+    private static final BigDecimal FEE_FAST_START = new BigDecimal("20000");
 
     @org.springframework.beans.factory.annotation.Value("${app.admin.referral-code:GEMADMIN}")
     private String adminReferralCode;
@@ -89,6 +90,11 @@ public class AuthService {
         User inviter = userRepository.findByReferralCode(req.referralCode())
                 .orElseThrow(() -> BusinessException.of(ErrorCode.INVALID_REFERRAL_CODE));
 
+        RegistrationPlan plan = req.plan() != null ? req.plan() : RegistrationPlan.STANDARD;
+        boolean fastStart = plan == RegistrationPlan.FAST_START;
+        int startingLevel = fastStart ? 2 : 1;
+        BigDecimal fee = fastStart ? FEE_FAST_START : FEE_STANDARD;
+
         User user = User.builder()
                 .firstName(req.firstName())
                 .lastName(req.lastName())
@@ -99,7 +105,7 @@ public class AuthService {
                 .inviter(inviter)
                 .role(Role.USER)
                 .accountStatus(AccountStatus.PENDING)
-                .currentLevel(1)
+                .currentLevel(startingLevel)
                 .currentStage(1)
                 .build();
 
@@ -108,7 +114,7 @@ public class AuthService {
         Payment payment = Payment.builder()
                 .user(user)
                 .type(PaymentType.ENTRY_FEE)
-                .amount(ENTRY_FEE)
+                .amount(fee)
                 .status(PaymentStatus.PENDING)
                 .build();
         payment = paymentRepository.save(payment);

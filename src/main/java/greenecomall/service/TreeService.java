@@ -43,7 +43,9 @@ public class TreeService {
      */
     @Transactional
     public void placeNewUser(User inviter, User newUser) {
-        int level = inviter.getCurrentLevel();
+        // Fast Start users (currentLevel=2) skip Level 1 and land in the Level 2 tree.
+        // Normal users use the inviter's current level.
+        int level = Math.max(inviter.getCurrentLevel(), newUser.getCurrentLevel());
         User directParent = bfsPlace(inviter, newUser, level, 1);
 
         if (directParent == null) {
