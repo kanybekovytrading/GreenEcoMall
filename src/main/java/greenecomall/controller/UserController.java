@@ -32,7 +32,7 @@ public class UserController {
     private final UserService userService;
     private final NotificationService notificationService;
 
-    @Value("${app.base-url:https://greenecomall.kg}")
+    @Value("${app.base-url:https://green-eco-mall-client.up.railway.app}")
     private String baseUrl;
 
     @Operation(summary = "Мой профиль", description = "Возвращает данные текущего авторизованного пользователя.")

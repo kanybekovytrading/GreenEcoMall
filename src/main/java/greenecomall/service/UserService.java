@@ -17,7 +17,7 @@ public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
 
-    @Value("${app.base-url:https://greenecomall.kg}")
+    @Value("${app.base-url:https://green-eco-mall-client.up.railway.app}")
     private String baseUrl;
 
     @Transactional(readOnly = true)

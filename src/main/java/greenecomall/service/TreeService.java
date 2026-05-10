@@ -12,6 +12,7 @@ import greenecomall.repository.TreePositionRepository;
 import greenecomall.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +27,9 @@ public class TreeService {
     private final TreePositionRepository treePositionRepo;
     private final UserRepository userRepository;
     private final NotificationService notificationService;
+
+    @Value("${app.base-url:https://green-eco-mall-client.up.railway.app}")
+    private String baseUrl;
 
     // Setter injection to break TreeService ↔ BonusService circular dependency
     private BonusService bonusService;
@@ -1200,7 +1204,7 @@ public class TreeService {
         int rightSize = countBranchDeep(member, level, 2, tier1);
 
         String referralCode = member.getReferralCode();
-        String referralLink = "https://greenecomall.kg/join?ref=" + referralCode;
+        String referralLink = baseUrl + "/join?ref=" + referralCode;
 
         return greenecomall.dto.response.MemberCardResponse.builder()
                 .userId(member.getId())

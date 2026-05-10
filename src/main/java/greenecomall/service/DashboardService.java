@@ -29,7 +29,7 @@ public class DashboardService {
     private final TreeService treeService;
     private final UserRepository userRepository;
 
-    @Value("${app.base-url:https://greenecomall.kg}")
+    @Value("${app.base-url:https://green-eco-mall-client.up.railway.app}")
     private String baseUrl;
 
     public DashboardResponse getDashboard(User user) {
