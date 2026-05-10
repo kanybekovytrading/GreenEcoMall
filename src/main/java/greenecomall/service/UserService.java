@@ -43,6 +43,8 @@ public class UserService {
                 .inviterReferralCode(inviter != null ? inviter.getReferralCode() : null)
                 .createdAt(u.getCreatedAt())
                 .activatedAt(u.getActivatedAt())
+                .registrationPlan(u.getRegistrationPlan())
+                .fastStartNumber(u.getFastStartNumber())
                 .build();
     }
 

@@ -1,6 +1,7 @@
 package greenecomall.dto.response;
 
 import greenecomall.enums.AccountStatus;
+import greenecomall.enums.RegistrationPlan;
 import greenecomall.enums.Role;
 import lombok.Builder;
 
@@ -28,5 +29,8 @@ public record UserProfileResponse(
         String inviterName,
         String inviterReferralCode,
         LocalDateTime createdAt,
-        LocalDateTime activatedAt
+        LocalDateTime activatedAt,
+        RegistrationPlan registrationPlan,
+        // null for STANDARD users; sequential number in Fast Start queue for FAST_START users
+        Integer fastStartNumber
 ) {}

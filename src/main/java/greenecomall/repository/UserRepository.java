@@ -44,4 +44,8 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     // Stage 2 users who still have at least 1 empty fixed partner slot
     @Query("SELECT u FROM User u WHERE u.currentLevel = 1 AND u.currentStage = 2 AND u.accountStatus = 'ACTIVE' AND (u.fixedPartnerLeft IS NULL OR u.fixedPartnerRight IS NULL) ORDER BY u.activatedAt ASC")
     List<User> findStage2UsersWithEmptySlots();
+
+    // Next sequential number for Fast Start queue
+    @Query("SELECT COALESCE(MAX(u.fastStartNumber), 0) + 1 FROM User u WHERE u.registrationPlan = 'FAST_START'")
+    int getNextFastStartNumber();
 }

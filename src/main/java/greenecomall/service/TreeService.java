@@ -80,6 +80,11 @@ public class TreeService {
      */
     @Transactional
     public void placeNewFastStartUser(User newUser) {
+        // Assign sequential Fast Start number
+        int queueNumber = userRepository.getNextFastStartNumber();
+        newUser.setFastStartNumber(queueNumber);
+        userRepository.save(newUser);
+
         User waitingHost = userRepository.findWaitingLevel0Users().stream()
                 .filter(c -> !c.getId().equals(newUser.getId()))
                 .filter(c -> treePositionRepo.countByParentAndLevelAndStage(c, 0, 1) == 0)
@@ -96,7 +101,7 @@ public class TreeService {
             // newUser is first in queue — they wait for the next Fast Start registrant
             notificationService.send(newUser, NotificationType.NEW_MEMBER,
                     "Быстрый Старт — ожидание",
-                    "Вы в очереди Быстрого Старта. Как только придёт следующий участник, вы перейдёте на Этап 2.");
+                    "Вы #" + queueNumber + " в программе Быстрого Старта. Ждём следующего участника.");
         }
     }
 
@@ -818,25 +823,33 @@ public class TreeService {
         StageStatus status = rootPos != null ? rootPos.getStageStatus() : StageStatus.WAITING;
 
         List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(user, level, stage);
-        int filled = tier1.size() + tier1.stream()
-                .mapToInt(c -> treePositionRepo.countByParentAndLevelAndStage(c.getUser(), level, stage))
-                .sum();
 
-        boolean hasAccelerator = tier1.stream().anyMatch(TreePosition::getIsAccelerator)
+        // Level 0 (Fast Start mini-tree): only 1 slot needed, no tier-2, no accelerators
+        boolean isFastStartTree = (level == 0);
+        int total  = isFastStartTree ? 1 : 6;
+        int filled = isFastStartTree
+                ? tier1.size()
+                : tier1.size() + tier1.stream()
+                        .mapToInt(c -> treePositionRepo.countByParentAndLevelAndStage(c.getUser(), level, stage))
+                        .sum();
+
+        boolean hasAccelerator = !isFastStartTree && (
+                tier1.stream().anyMatch(TreePosition::getIsAccelerator)
                 || tier1.stream().anyMatch(c ->
-                treePositionRepo.findByParentAndLevelAndStage(c.getUser(), level, stage)
-                        .stream().anyMatch(TreePosition::getIsAccelerator));
+                        treePositionRepo.findByParentAndLevelAndStage(c.getUser(), level, stage)
+                                .stream().anyMatch(TreePosition::getIsAccelerator)));
 
-        // Stage 1 Level 1: infinite BFS tree; everything else: up to 6 (2 tiers)
-        int depth = (stage == 1 && level == 1) ? 20 : 3;
+        // Stage 1 Level 1: infinite BFS tree; Level 0: depth 1; everything else: up to 6 (2 tiers)
+        int depth = isFastStartTree ? 1 : (stage == 1 && level == 1) ? 20 : 3;
 
         TreeNodeResponse rootNode = buildNode(user, level, stage, depth);
 
         return TreeResponse.builder()
                 .root(rootNode)
                 .stageStatus(status)
-                .progress(TreeResponse.TreeProgress.builder().filled(filled).total(6).build())
+                .progress(TreeResponse.TreeProgress.builder().filled(filled).total(total).build())
                 .accelerator(TreeResponse.AcceleratorInfo.builder().active(hasAccelerator).build())
+                .fastStartNumber(isFastStartTree ? user.getFastStartNumber() : null)
                 .build();
     }
 

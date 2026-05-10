@@ -83,4 +83,7 @@ public class User {
     private LocalDateTime createdAt;
 
     private LocalDateTime activatedAt;
+
+    // Sequential position in the Fast Start (Level 0) queue — null for STANDARD users
+    private Integer fastStartNumber;
 }
