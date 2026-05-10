@@ -108,6 +108,7 @@ public class AuthService {
                 .currentLevel(startingLevel)
                 .currentStage(1)
                 .registrationPlan(plan)
+                .codeWord(req.codeWord() != null ? req.codeWord().trim().toLowerCase() : null)
                 .build();
 
         user = userRepository.save(user);
@@ -126,6 +127,39 @@ public class AuthService {
                 jwtUtil.generateAccessToken(user.getId(), user.getRole()),
                 jwtUtil.generateRefreshToken(user.getId())
         );
+    }
+
+    @Transactional
+    public LocalDateTime forgotPassword(ForgotPasswordRequest req) {
+        String formatted = smsService.formatPhone(req.phone());
+        User user = userRepository.findByPhone(formatted)
+                .orElseThrow(() -> BusinessException.of(ErrorCode.USER_NOT_FOUND));
+
+        String stored = user.getCodeWord();
+        if (stored == null || !stored.equals(req.codeWord().trim().toLowerCase())) {
+            throw BusinessException.of(ErrorCode.INVALID_OTP); // reuse generic error
+        }
+
+        return smsService.sendOtp(formatted);
+    }
+
+    @Transactional
+    public void resetPassword(ResetPasswordRequest req) {
+        String formatted = smsService.formatPhone(req.phone());
+
+        OtpCode otp = otpCodeRepository
+                .findFirstByPhoneAndIsUsedFalseOrderByCreatedAtDesc(formatted)
+                .orElseThrow(() -> BusinessException.of(ErrorCode.INVALID_OTP));
+
+        if (otp.getExpiresAt().isBefore(LocalDateTime.now()) || !otp.getCode().equals(req.code())) {
+            throw BusinessException.of(ErrorCode.INVALID_OTP);
+        }
+        otp.setIsUsed(true);
+
+        User user = userRepository.findByPhone(formatted)
+                .orElseThrow(() -> BusinessException.of(ErrorCode.USER_NOT_FOUND));
+        user.setPasswordHash(passwordEncoder.encode(req.newPassword()));
+        userRepository.save(user);
     }
 
     public LoginResponse login(LoginRequest req) {

@@ -153,4 +153,41 @@ public class AuthController {
     public ResponseEntity<ApiResponse<LoginResponse>> refresh(@Valid @RequestBody RefreshTokenRequest req) {
         return ResponseEntity.ok(ApiResponse.ok(authService.refresh(req.refreshToken())));
     }
+
+    @Operation(summary = "Забыл пароль — шаг 1: проверить кодовое слово и отправить OTP",
+            description = """
+                    Принимает номер телефона и кодовое слово, заданное при регистрации.
+                    Если всё верно — отправляет SMS с OTP-кодом.
+                    Следующий шаг: POST /reset-password с кодом и новым паролем.
+                    """)
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "OTP отправлен"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "404", description = "Пользователь не найден", content = @Content),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Неверное кодовое слово", content = @Content)
+    })
+    @PostMapping("/forgot-password")
+    public ResponseEntity<ApiResponse<java.util.Map<String, Object>>> forgotPassword(
+            @Valid @RequestBody greenecomall.dto.request.ForgotPasswordRequest req) {
+        java.time.LocalDateTime expiresAt = authService.forgotPassword(req);
+        return ResponseEntity.ok(ApiResponse.ok(java.util.Map.of(
+                "sent", true,
+                "expiresAt", expiresAt.toString()
+        )));
+    }
+
+    @Operation(summary = "Забыл пароль — шаг 2: подтвердить OTP и установить новый пароль",
+            description = """
+                    Принимает номер телефона, OTP-код из SMS и новый пароль.
+                    При успехе — пароль изменён, можно входить через /login.
+                    """)
+    @ApiResponses({
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "Пароль изменён"),
+            @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "400", description = "Неверный или истёкший OTP", content = @Content)
+    })
+    @PostMapping("/reset-password")
+    public ResponseEntity<ApiResponse<java.util.Map<String, Boolean>>> resetPassword(
+            @Valid @RequestBody greenecomall.dto.request.ResetPasswordRequest req) {
+        authService.resetPassword(req);
+        return ResponseEntity.ok(ApiResponse.ok(java.util.Map.of("success", true)));
+    }
 }
