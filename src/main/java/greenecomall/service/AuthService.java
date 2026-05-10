@@ -38,8 +38,8 @@ public class AuthService {
     private final SmsService smsService;
 
     private static final String REFERRAL_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    private static final BigDecimal FEE_STANDARD   = new BigDecimal("10000");
-    private static final BigDecimal FEE_FAST_START = new BigDecimal("20000");
+    private static final BigDecimal FEE_STANDARD   = new BigDecimal("1");
+    private static final BigDecimal FEE_FAST_START = new BigDecimal("2");
 
     @org.springframework.beans.factory.annotation.Value("${app.admin.referral-code:GEMADMIN}")
     private String adminReferralCode;
@@ -92,7 +92,7 @@ public class AuthService {
 
         RegistrationPlan plan = req.plan() != null ? req.plan() : RegistrationPlan.STANDARD;
         boolean fastStart = plan == RegistrationPlan.FAST_START;
-        int startingLevel = fastStart ? 2 : 1;
+        int startingLevel = fastStart ? 0 : 1;
         BigDecimal fee = fastStart ? FEE_FAST_START : FEE_STANDARD;
 
         User user = User.builder()

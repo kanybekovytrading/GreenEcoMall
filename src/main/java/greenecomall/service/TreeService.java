@@ -73,34 +73,93 @@ public class TreeService {
     }
 
     /**
-     * Fast Start placement: finds the oldest waiting Fast Start user (level=2, stage=1, 0 children)
-     * and places newUser under them. If no one is waiting — newUser becomes the first in queue.
+     * Fast Start (Level 0) placement.
+     * Finds the oldest Level 0 user who has no child yet and places newUser under them.
+     * That triggers the host's graduation to Stage 2 of Level 1.
+     * If no waiting host found — newUser becomes the first in queue.
      */
     @Transactional
     public void placeNewFastStartUser(User newUser) {
-        List<User> candidates = userRepository.findFastStartUsersAtStage1(RegistrationPlan.FAST_START);
-
-        User waitingHost = candidates.stream()
+        User waitingHost = userRepository.findWaitingLevel0Users().stream()
                 .filter(c -> !c.getId().equals(newUser.getId()))
-                .filter(c -> treePositionRepo.countByParentAndLevelAndStage(c, 2, 1) == 0)
+                .filter(c -> treePositionRepo.countByParentAndLevelAndStage(c, 0, 1) == 0)
                 .findFirst()
                 .orElse(null);
 
         if (waitingHost != null) {
-            savePosition(newUser, waitingHost, 2, 1, 1);
-            checkStage1Completion(waitingHost, 2);
+            // Place newUser under waitingHost in the Level 0 mini-tree
+            savePosition(newUser, waitingHost, 0, 1, 1);
 
-            notificationService.send(waitingHost, NotificationType.NEW_MEMBER,
-                    "Быстрый Старт",
-                    newUser.getFirstName() + " " + newUser.getLastName() + " встал под вас — Этап 1 завершён!");
+            // Host now has their 1 person — graduate to Stage 2 of Level 1
+            graduateLevel0User(waitingHost, newUser);
+        } else {
+            // newUser is first in queue — they wait for the next Fast Start registrant
+            notificationService.send(newUser, NotificationType.NEW_MEMBER,
+                    "Быстрый Старт — ожидание",
+                    "Вы в очереди Быстрого Старта. Как только придёт следующий участник, вы перейдёте на Этап 2.");
         }
-        // If no waiting host, newUser is first in queue — no tree position yet, waits for next Fast Start user.
+    }
 
-        notificationService.send(newUser, NotificationType.NEW_MEMBER,
+    /**
+     * Called when a Level 0 user gets their 1 required person.
+     * Graduate jumps to Level 1, Stage 2 by finding any Stage 2 user with an empty
+     * fixed-partner slot, respecting the rule: max 1 Level 0 graduate per node.
+     * Priority: left slot first, earliest-activated host first.
+     */
+    private void graduateLevel0User(User graduate, User newUnder) {
+        User locked = userRepository.findByIdForUpdate(graduate.getId()).orElse(graduate);
+        locked.setCurrentLevel(1);
+        locked.setCurrentStage(2);
+        userRepository.save(locked);
+
+        notificationService.send(locked, NotificationType.STAGE_COMPLETE,
+                "Быстрый Старт завершён!",
+                newUnder.getFirstName() + " " + newUnder.getLastName()
+                        + " встал под вас. Переход на Этап 2 Уровня 1!");
+        notificationService.send(newUnder, NotificationType.NEW_MEMBER,
                 "Аккаунт активирован",
-                waitingHost != null
-                        ? "Вы размещены в команду Быстрого Старта!"
-                        : "Вы в очереди Быстрого Старта. Ждём следующего участника.");
+                "Вы размещены в Быстром Старте. Теперь ждите своего участника.");
+
+        // Find eligible Stage 2 slot: earliest activated, left before right,
+        // no node may have both slots occupied by Level 0 graduates.
+        List<User> stage2Candidates = userRepository.findStage2UsersWithEmptySlots();
+        for (User candidate : stage2Candidates) {
+            User host = userRepository.findByIdForUpdate(candidate.getId()).orElse(candidate);
+
+            boolean leftIsLevel0  = host.getFixedPartnerLeft() != null
+                    && host.getFixedPartnerLeft().getRegistrationPlan() == RegistrationPlan.FAST_START;
+            boolean rightIsLevel0 = host.getFixedPartnerRight() != null
+                    && host.getFixedPartnerRight().getRegistrationPlan() == RegistrationPlan.FAST_START;
+
+            if (host.getFixedPartnerLeft() == null && !rightIsLevel0) {
+                host.setFixedPartnerLeft(locked);
+                userRepository.save(host);
+                notificationService.send(host, NotificationType.NEW_MEMBER,
+                        "Этап 2 — левая позиция занята",
+                        locked.getFirstName() + " " + locked.getLastName() + " (Быстрый Старт) встал слева");
+                if (host.getFixedPartnerRight() != null) {
+                    onStage2Completed(host, 1);
+                }
+                log.info("Level 0 graduate {} placed as fixedPartnerLeft of {}", locked.getId(), host.getId());
+                return;
+            }
+
+            if (host.getFixedPartnerRight() == null && !leftIsLevel0) {
+                host.setFixedPartnerRight(locked);
+                userRepository.save(host);
+                notificationService.send(host, NotificationType.NEW_MEMBER,
+                        "Этап 2 — правая позиция занята",
+                        locked.getFirstName() + " " + locked.getLastName() + " (Быстрый Старт) встал справа");
+                if (host.getFixedPartnerLeft() != null) {
+                    onStage2Completed(host, 1);
+                }
+                log.info("Level 0 graduate {} placed as fixedPartnerRight of {}", locked.getId(), host.getId());
+                return;
+            }
+        }
+
+        log.warn("Level 0 graduate {} could not find an eligible Stage 2 slot — will be picked up by repair job",
+                locked.getId());
     }
 
     /**
@@ -402,16 +461,9 @@ public class TreeService {
         User fresh = userRepository.findById(root.getId()).orElse(root);
         if (fresh.getCurrentLevel() != level || fresh.getCurrentStage() != 1) return;
 
-        boolean isFastStart = fresh.getRegistrationPlan() == RegistrationPlan.FAST_START;
-
-        if (isFastStart) {
-            // Fast Start: needs only 1 person to complete Stage 1
-            int count = treePositionRepo.countByParentAndLevelAndStage(fresh, level, 1);
-            if (count >= 1) {
-                onStage1Completed(fresh, level);
-            }
-            return;
-        }
+        // Level 0 (Fast Start) graduation is triggered directly in placeNewFastStartUser,
+        // not through this general-purpose check.
+        if (fresh.getRegistrationPlan() == RegistrationPlan.FAST_START) return;
 
         // Standard: needs 6 positions (2 tiers)
         int tier1 = treePositionRepo.countByParentAndLevelAndStage(fresh, level, 1);
@@ -737,17 +789,7 @@ public class TreeService {
      * Returns true if all 6 members in root's Stage-1 tree have currentStage >= minStage.
      */
     private boolean allSixMembersAtStage(User root, int level, int minStage) {
-        boolean isFastStart = root.getRegistrationPlan() == RegistrationPlan.FAST_START;
-
         List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(root, level, 1);
-
-        if (isFastStart) {
-            // Fast Start: Stage 3 completes when the 1 member reaches the required stage
-            if (tier1.isEmpty()) return false;
-            return tier1.get(0).getUser().getCurrentStage() >= minStage;
-        }
-
-        // Standard: all 6 members (2 tiers) must reach minStage
         if (tier1.size() < 2) return false;
 
         for (TreePosition t1 : tier1) {
