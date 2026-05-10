@@ -199,7 +199,7 @@ public class AdminController {
     }
 
     @Operation(summary = "Статистика платформы")
-    @GetMapping("/stats")
+    @GetMapping({"/stats", "/dashboard/stats"})
     public ResponseEntity<ApiResponse<AdminStatsResponse>> getStats() {
         long totalUsers = userRepository.count();
         long activeUsers = userRepository.countByAccountStatus(AccountStatus.ACTIVE);

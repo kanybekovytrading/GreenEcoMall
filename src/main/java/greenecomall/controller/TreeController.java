@@ -2,6 +2,7 @@ package greenecomall.controller;
 
 import greenecomall.dto.response.ApiResponse;
 import greenecomall.dto.response.BranchStatsResponse;
+
 import greenecomall.dto.response.StagesOverviewResponse;
 import greenecomall.dto.response.TeamActivityResponse;
 import greenecomall.dto.response.TreeResponse;
@@ -123,5 +124,18 @@ public class TreeController {
                 "currentLevel", user.getCurrentLevel(),
                 "currentStage", user.getCurrentStage()
         )));
+    }
+
+    @Operation(
+            summary = "Карточка участника дерева",
+            description = """
+                    Вызывается при клике на узел дерева. Возвращает подробную информацию об участнике:
+                    имя, уровень/этап, реферальная ссылка, дата вступления, размер его команды (все тиры).
+                    """
+    )
+    @GetMapping("/member/{userId}")
+    public ResponseEntity<ApiResponse<greenecomall.dto.response.MemberCardResponse>> getMemberCard(
+            @PathVariable java.util.UUID userId) {
+        return ResponseEntity.ok(ApiResponse.ok(treeService.getMemberCard(userId)));
     }
 }

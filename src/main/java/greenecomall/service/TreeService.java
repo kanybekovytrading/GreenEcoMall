@@ -1183,6 +1183,66 @@ public class TreeService {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // API: MEMBER CARD — карточка участника при клике на узел дерева
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public greenecomall.dto.response.MemberCardResponse getMemberCard(java.util.UUID memberId) {
+        User member = userRepository.findById(memberId)
+                .orElseThrow(() -> greenecomall.exception.BusinessException.of(
+                        greenecomall.exception.ErrorCode.USER_NOT_FOUND));
+
+        int level = member.getCurrentLevel();
+        List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(member, level, 1);
+
+        // Считаем левую и правую ветки
+        int leftSize  = countBranchDeep(member, level, 1, tier1);
+        int rightSize = countBranchDeep(member, level, 2, tier1);
+
+        String referralCode = member.getReferralCode();
+        String referralLink = "https://greenecomall.kg/join?ref=" + referralCode;
+
+        return greenecomall.dto.response.MemberCardResponse.builder()
+                .userId(member.getId())
+                .name(member.getFirstName() + " " + member.getLastName())
+                .initials(initials(member))
+                .currentLevel(member.getCurrentLevel())
+                .currentStage(member.getCurrentStage())
+                .accountStatus(member.getAccountStatus())
+                .referralCode(referralCode)
+                .referralLink(referralLink)
+                .joinedAt(member.getActivatedAt())
+                .teamSize(leftSize + rightSize)
+                .leftBranchSize(leftSize)
+                .rightBranchSize(rightSize)
+                .build();
+    }
+
+    private int countBranchDeep(User root, int level, int side, List<TreePosition> tier1) {
+        Optional<TreePosition> directOpt = tier1.stream()
+                .filter(c -> c.getPosition() == side && !c.getIsAccelerator())
+                .findFirst();
+        if (directOpt.isEmpty()) return 0;
+
+        int count = 0;
+        Queue<User> queue = new ArrayDeque<>();
+        Set<UUID> visited = new HashSet<>();
+        queue.add(directOpt.get().getUser());
+        visited.add(directOpt.get().getUser().getId());
+
+        while (!queue.isEmpty()) {
+            User current = queue.poll();
+            count++;
+            for (TreePosition child : treePositionRepo.findByParentAndLevelAndStage(current, level, 1)) {
+                if (!child.getIsAccelerator() && visited.add(child.getUser().getId())) {
+                    queue.add(child.getUser());
+                }
+            }
+        }
+        return count;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // API: BRANCH STATS — левая и правая ветки с участниками
     // ─────────────────────────────────────────────────────────────────────────
 
