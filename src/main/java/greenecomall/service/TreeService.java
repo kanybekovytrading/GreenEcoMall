@@ -1212,7 +1212,7 @@ public class TreeService {
                 .referralCode(referralCode)
                 .referralLink(referralLink)
                 .joinedAt(member.getActivatedAt())
-                .teamSize(leftSize + rightSize)
+                .teamSize(countDownline(member))
                 .leftBranchSize(leftSize)
                 .rightBranchSize(rightSize)
                 .build();
@@ -1238,6 +1238,17 @@ public class TreeService {
                     queue.add(child.getUser());
                 }
             }
+        }
+        return count;
+    }
+
+    private int countDownline(User root) {
+        int count = 0;
+        Queue<User> queue = new ArrayDeque<>(userRepository.findByInviter(root));
+        while (!queue.isEmpty()) {
+            User current = queue.poll();
+            count++;
+            queue.addAll(userRepository.findByInviter(current));
         }
         return count;
     }

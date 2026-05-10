@@ -48,4 +48,6 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     // Next sequential number for Fast Start queue
     @Query("SELECT COALESCE(MAX(u.fastStartNumber), 0) + 1 FROM User u WHERE u.registrationPlan = 'FAST_START'")
     int getNextFastStartNumber();
+
+    List<User> findByInviter(User inviter);
 }

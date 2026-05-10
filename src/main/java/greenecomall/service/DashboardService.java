@@ -8,6 +8,7 @@ import greenecomall.entity.User;
 import greenecomall.enums.BonusStatus;
 import greenecomall.repository.BonusRepository;
 import greenecomall.repository.TreePositionRepository;
+import greenecomall.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
@@ -15,7 +16,9 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Queue;
 
 @Service
 @RequiredArgsConstructor
@@ -24,6 +27,7 @@ public class DashboardService {
     private final BonusRepository bonusRepository;
     private final TreePositionRepository treePositionRepo;
     private final TreeService treeService;
+    private final UserRepository userRepository;
 
     @Value("${app.base-url:https://greenecomall.kg}")
     private String baseUrl;
@@ -42,8 +46,8 @@ public class DashboardService {
                 .mapToInt(c -> treePositionRepo.countByParentAndLevelAndStage(c.getUser(), level, 1))
                 .sum();
 
-        // Team size = all direct children in stage 1 tree (levels 1-N)
-        int teamSize = countAllTeamMembers(user, level);
+        // Team size = все под ним по реферальной цепочке (все тиры, все уровни)
+        int teamSize = countDownline(user);
 
         // Recent bonuses (last 3)
         List<Bonus> bonuses = bonusRepository.findByUser(user,
@@ -92,14 +96,13 @@ public class DashboardService {
                 .sum();
     }
 
-    private int countAllTeamMembers(User root, int level) {
-        List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(root, level, 1);
+    private int countDownline(User root) {
         int count = 0;
-        for (TreePosition t1 : tier1) {
-            if (!t1.getIsAccelerator()) {
-                count++;
-                count += treePositionRepo.countByParentAndLevelAndStage(t1.getUser(), level, 1);
-            }
+        Queue<User> queue = new ArrayDeque<>(userRepository.findByInviter(root));
+        while (!queue.isEmpty()) {
+            User current = queue.poll();
+            count++;
+            queue.addAll(userRepository.findByInviter(current));
         }
         return count;
     }
