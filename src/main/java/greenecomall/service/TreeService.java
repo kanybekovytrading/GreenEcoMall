@@ -1194,15 +1194,13 @@ public class TreeService {
         BranchStatsResponse.BranchInfo leftInfo  = buildBranchInfo(user, level, 1, tier1);
         BranchStatsResponse.BranchInfo rightInfo = buildBranchInfo(user, level, 2, tier1);
 
-        int filled = tier1.size() + tier1.stream()
-                .mapToInt(c -> treePositionRepo.countByParentAndLevelAndStage(c.getUser(), level, 1))
-                .sum();
+        int filled = leftInfo.size() + rightInfo.size();
 
         return BranchStatsResponse.builder()
                 .left(leftInfo)
                 .right(rightInfo)
                 .totalFilled(filled)
-                .total(6)
+                .total(filled) // total = all real members across both branches
                 .build();
     }
 
@@ -1215,11 +1213,22 @@ public class TreeService {
                 .findFirst();
 
         if (directOpt.isPresent()) {
-            TreePosition direct = directOpt.get();
-            members.add(toBranchMember(direct));
+            // BFS вглубь без ограничений
+            Queue<User> queue = new ArrayDeque<>();
+            Set<UUID> visited = new HashSet<>();
+            queue.add(directOpt.get().getUser());
+            members.add(toBranchMember(directOpt.get()));
+            visited.add(directOpt.get().getUser().getId());
 
-            treePositionRepo.findByParentAndLevelAndStage(direct.getUser(), level, 1)
-                    .forEach(child -> members.add(toBranchMember(child)));
+            while (!queue.isEmpty()) {
+                User current = queue.poll();
+                for (TreePosition child : treePositionRepo.findByParentAndLevelAndStage(current, level, 1)) {
+                    if (visited.add(child.getUser().getId())) {
+                        members.add(toBranchMember(child));
+                        queue.add(child.getUser());
+                    }
+                }
+            }
         }
 
         return BranchStatsResponse.BranchInfo.builder()
