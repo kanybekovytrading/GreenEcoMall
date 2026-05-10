@@ -735,12 +735,14 @@ public class TreeService {
     }
 
     private TreeResponse buildFixedPartnersTree(User user, int level, int stage) {
-        User left  = userRepository.findById(
-                user.getFixedPartnerLeft()  != null ? user.getFixedPartnerLeft().getId()  : user.getId())
-                .filter(u -> user.getFixedPartnerLeft() != null).orElse(null);
-        User right = userRepository.findById(
-                user.getFixedPartnerRight() != null ? user.getFixedPartnerRight().getId() : user.getId())
-                .filter(u -> user.getFixedPartnerRight() != null).orElse(null);
+        // Don't show partners if user hasn't reached this stage yet
+        boolean userReachedStage = user.getCurrentLevel() > level
+                || (user.getCurrentLevel() == level && user.getCurrentStage() >= stage);
+
+        User left  = userReachedStage && user.getFixedPartnerLeft()  != null
+                ? userRepository.findById(user.getFixedPartnerLeft().getId()).orElse(null)  : null;
+        User right = userReachedStage && user.getFixedPartnerRight() != null
+                ? userRepository.findById(user.getFixedPartnerRight().getId()).orElse(null) : null;
 
         List<TreeNodeResponse> children = new ArrayList<>();
         if (left != null) {
