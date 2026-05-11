@@ -36,7 +36,7 @@ public interface NewsRepository extends JpaRepository<News, UUID> {
 
     // Админ: поиск по заголовку/описанию
     @Query("SELECT n FROM News n WHERE (:status IS NULL OR n.status = :status) " +
-           "AND (:search IS NULL OR LOWER(n.title) LIKE LOWER(CONCAT('%', :search, '%')) " +
+           "AND (cast(:search as String) IS NULL OR LOWER(n.title) LIKE LOWER(CONCAT('%', :search, '%')) " +
            "OR LOWER(n.excerpt) LIKE LOWER(CONCAT('%', :search, '%'))) " +
            "ORDER BY n.pinned DESC, n.createdAt DESC")
     Page<News> findByStatusAndSearch(@Param("status") NewsStatus status,
