@@ -104,7 +104,7 @@ public class NewsService {
 
         News news = News.builder()
                 .title(req.title())
-                .excerpt(req.excerpt())
+                .excerpt(req.excerpt() != null ? req.excerpt() : "")
                 .body(req.body())
                 .category(req.category())
                 .audience(req.audience() != null ? req.audience() : NewsAudience.ALL)
@@ -123,7 +123,7 @@ public class NewsService {
     public NewsItemResponse saveDraft(CreateNewsRequest req) {
         News news = News.builder()
                 .title(req.title())
-                .excerpt(req.excerpt())
+                .excerpt(req.excerpt() != null ? req.excerpt() : "")
                 .body(req.body())
                 .category(req.category())
                 .audience(req.audience() != null ? req.audience() : NewsAudience.ALL)
