@@ -933,8 +933,8 @@ public class TreeService {
         int[] reached = {0};
         List<TreeNodeResponse> rootChildren = new ArrayList<>();
 
-        if (left1 != null) rootChildren.add(buildStage3Node(left1, 1, reached));
-        if (right1 != null) rootChildren.add(buildStage3Node(right1, 2, reached));
+        if (left1  != null && left1.getCurrentStage()  >= 3) rootChildren.add(buildStage3Node(left1,  1, reached));
+        if (right1 != null && right1.getCurrentStage() >= 3) rootChildren.add(buildStage3Node(right1, 2, reached));
 
         TreeNodeResponse rootNode = TreeNodeResponse.builder()
                 .userId(user.getId())
@@ -952,20 +952,20 @@ public class TreeService {
                 .build();
     }
 
-    /** Строит узел Stage-3 дерева: сам участник + его 2 фикс. партнёра (tier-2). */
+    /** Строит узел Stage-3 дерева: сам участник + его партнёры tier-2 если они дошли до Stage 3. */
     private TreeNodeResponse buildStage3Node(User member, int position, int[] reached) {
-        boolean done = member.getCurrentStage() >= 3;
-        if (done) reached[0]++;
+        reached[0]++; // этот участник уже прошёл проверку >= 3 перед вызовом
+        boolean completed = member.getCurrentStage() > 3; // завершил Stage 3 = перешёл на Stage 4+
 
-        // Tier-2: партнёры этого участника
         User subLeft  = member.getFixedPartnerLeft()  != null
                 ? userRepository.findById(member.getFixedPartnerLeft().getId()).orElse(null)  : null;
         User subRight = member.getFixedPartnerRight() != null
                 ? userRepository.findById(member.getFixedPartnerRight().getId()).orElse(null) : null;
 
         List<TreeNodeResponse> children = new ArrayList<>();
-        if (subLeft  != null) children.add(buildStage3LeafNode(subLeft,  1, reached));
-        if (subRight != null) children.add(buildStage3LeafNode(subRight, 2, reached));
+        // Показываем sub-партнёра только если он тоже дошёл до Stage 3
+        if (subLeft  != null && subLeft.getCurrentStage()  >= 3) children.add(buildStage3LeafNode(subLeft,  1, reached));
+        if (subRight != null && subRight.getCurrentStage() >= 3) children.add(buildStage3LeafNode(subRight, 2, reached));
 
         return TreeNodeResponse.builder()
                 .userId(member.getId())
@@ -973,21 +973,21 @@ public class TreeService {
                 .initials(initials(member))
                 .position(position)
                 .isAccelerator(false)
-                .stageStatus(done ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
+                .stageStatus(completed ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
                 .children(children)
                 .build();
     }
 
     private TreeNodeResponse buildStage3LeafNode(User member, int position, int[] reached) {
-        boolean done = member.getCurrentStage() >= 3;
-        if (done) reached[0]++;
+        reached[0]++;
+        boolean completed = member.getCurrentStage() > 3;
         return TreeNodeResponse.builder()
                 .userId(member.getId())
                 .name(member.getFirstName() + " " + member.getLastName())
                 .initials(initials(member))
                 .position(position)
                 .isAccelerator(false)
-                .stageStatus(done ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
+                .stageStatus(completed ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
                 .children(List.of())
                 .build();
     }
