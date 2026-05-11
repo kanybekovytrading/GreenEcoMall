@@ -1,5 +1,6 @@
 package greenecomall.dto.request;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import greenecomall.enums.NewsAudience;
 import greenecomall.enums.NewsCategory;
 import jakarta.validation.constraints.NotBlank;
@@ -10,7 +11,7 @@ import java.time.LocalDateTime;
 public record CreateNewsRequest(
         @NotBlank String title,
         @NotBlank String excerpt,
-        String body,
+        @JsonAlias("content") String body,
         @NotNull NewsCategory category,
         NewsAudience audience,           // null → ALL
         LocalDateTime publishAt,         // null → опубликовать сейчас
