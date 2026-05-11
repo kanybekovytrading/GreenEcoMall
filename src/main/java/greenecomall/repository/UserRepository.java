@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -50,4 +51,14 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     int getNextFastStartNumber();
 
     List<User> findByInviter(User inviter);
+
+    // Количество новых активных пользователей по дням за период
+    @Query("SELECT CAST(u.activatedAt AS date), COUNT(u) FROM User u " +
+           "WHERE u.accountStatus = 'ACTIVE' AND u.activatedAt >= :from " +
+           "GROUP BY CAST(u.activatedAt AS date) ORDER BY CAST(u.activatedAt AS date)")
+    List<Object[]> countActivatedByDay(@Param("from") LocalDateTime from);
+
+    // Общее кол-во активных пользователей до определённой даты (для накопительного графика)
+    @Query("SELECT COUNT(u) FROM User u WHERE u.accountStatus = 'ACTIVE' AND u.activatedAt < :before")
+    long countActiveBefore(@Param("before") LocalDateTime before);
 }

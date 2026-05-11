@@ -263,6 +263,41 @@ public class AdminController {
         return value;
     }
 
+    @Operation(summary = "Динамика роста — данные для графика",
+            description = """
+                    Возвращает массив точек {date, newUsers, totalUsers} по дням за период.
+                    **days** — количество дней назад (7, 30, 90). По умолчанию 30.
+                    `totalUsers` — накопительный итог (cumulative), именно его рисуй на графике.
+                    """)
+    @GetMapping("/stats/growth")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> getGrowthStats(
+            @RequestParam(defaultValue = "30") int days) {
+
+        LocalDateTime from = LocalDateTime.now().minusDays(days).toLocalDate().atStartOfDay();
+        long baseCount = userRepository.countActiveBefore(from);
+
+        List<Object[]> rows = userRepository.countActivatedByDay(from);
+        Map<java.time.LocalDate, Long> byDay = new LinkedHashMap<>();
+        for (Object[] row : rows) {
+            java.time.LocalDate date = ((java.sql.Date) row[0]).toLocalDate();
+            byDay.put(date, (Long) row[1]);
+        }
+
+        List<Map<String, Object>> result = new java.util.ArrayList<>();
+        long cumulative = baseCount;
+        java.time.LocalDate today = java.time.LocalDate.now();
+        for (java.time.LocalDate d = from.toLocalDate(); !d.isAfter(today); d = d.plusDays(1)) {
+            long newUsers = byDay.getOrDefault(d, 0L);
+            cumulative += newUsers;
+            result.add(Map.of(
+                    "date", d.toString(),
+                    "newUsers", newUsers,
+                    "totalUsers", cumulative
+            ));
+        }
+        return ResponseEntity.ok(ApiResponse.ok(result));
+    }
+
     @Operation(summary = "Статистика платформы")
     @GetMapping({"/stats", "/dashboard/stats"})
     public ResponseEntity<ApiResponse<AdminStatsResponse>> getStats() {
