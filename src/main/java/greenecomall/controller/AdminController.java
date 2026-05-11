@@ -2,18 +2,20 @@ package greenecomall.controller;
 
 import greenecomall.dto.response.AdminStatsResponse;
 import greenecomall.dto.response.ApiResponse;
+import greenecomall.dto.response.WithdrawalItemResponse;
+import greenecomall.dto.response.WithdrawalStatsResponse;
 import greenecomall.dto.request.RegisterRequest;
 import greenecomall.entity.User;
 import greenecomall.entity.Withdrawal;
 import greenecomall.service.AuthService;
 import greenecomall.service.PaymentService;
 import greenecomall.service.TreeService;
+import greenecomall.service.WithdrawalService;
 import greenecomall.enums.AccountStatus;
 import greenecomall.enums.WithdrawalStatus;
 import greenecomall.exception.BusinessException;
 import greenecomall.exception.ErrorCode;
 import greenecomall.repository.*;
-import greenecomall.service.WithdrawalService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -29,6 +31,8 @@ import org.springframework.web.bind.annotation.*;
 
 import jakarta.validation.Valid;
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -82,31 +86,92 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok());
     }
 
-    @Operation(summary = "Заявки на вывод")
+    @Operation(summary = "Статистика выплат — 4 карточки вверху",
+            description = "pendingCount, pendingSum, approvedToday, totalPaid")
+    @GetMapping("/withdrawals/stats")
+    public ResponseEntity<ApiResponse<WithdrawalStatsResponse>> getWithdrawalStats() {
+        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
+        return ResponseEntity.ok(ApiResponse.ok(WithdrawalStatsResponse.builder()
+                .pendingCount(withdrawalRepository.countByStatus(WithdrawalStatus.PENDING))
+                .pendingSum(withdrawalRepository.sumByStatus(WithdrawalStatus.PENDING))
+                .approvedToday(withdrawalRepository.countByStatusAndReviewedAtAfter(WithdrawalStatus.APPROVED, todayStart))
+                .totalPaid(withdrawalRepository.sumTotalApproved())
+                .build()));
+    }
+
+    @Operation(summary = "Заявки на вывод",
+            description = "status: PENDING | APPROVED | REJECTED. period: ALL | MONTH (по умолчанию ALL)")
     @GetMapping("/withdrawals")
-    public ResponseEntity<ApiResponse<Page<Withdrawal>>> getWithdrawals(
-            @Parameter(description = "Статус: PENDING | APPROVED | REJECTED")
-            @RequestParam(defaultValue = "PENDING") WithdrawalStatus status,
+    public ResponseEntity<ApiResponse<Page<WithdrawalItemResponse>>> getWithdrawals(
+            @Parameter(description = "Статус: PENDING | APPROVED | REJECTED | ALL")
+            @RequestParam(required = false) WithdrawalStatus status,
+            @Parameter(description = "Период: ALL | MONTH")
+            @RequestParam(defaultValue = "ALL") String period,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        return ResponseEntity.ok(ApiResponse.ok(
-                withdrawalRepository.findByStatus(status, PageRequest.of(page, size,
-                        Sort.by(Sort.Direction.ASC, "createdAt")))));
+
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        LocalDateTime from = "MONTH".equalsIgnoreCase(period)
+                ? LocalDateTime.now().minusMonths(1) : null;
+
+        Page<Withdrawal> raw;
+        if (status != null && from != null) {
+            raw = withdrawalRepository.findByStatusAndCreatedAtAfter(status, from, pageable);
+        } else if (status != null) {
+            raw = withdrawalRepository.findByStatus(status, pageable);
+        } else if (from != null) {
+            raw = withdrawalRepository.findByCreatedAtAfter(from, pageable);
+        } else {
+            raw = withdrawalRepository.findAll(pageable);
+        }
+
+        Page<WithdrawalItemResponse> result = raw.map(w -> WithdrawalItemResponse.builder()
+                .id(w.getId())
+                .userId(w.getUser().getId())
+                .userName(w.getUser().getFirstName() + " " + w.getUser().getLastName())
+                .userPhone(w.getUser().getPhone())
+                .amount(w.getAmount())
+                .status(w.getStatus())
+                .method(w.getMethod().name())
+                .requisite(w.getRequisite())
+                .adminNote(w.getAdminNote())
+                .createdAt(w.getCreatedAt())
+                .reviewedAt(w.getReviewedAt())
+                .build());
+        return ResponseEntity.ok(ApiResponse.ok(result));
     }
 
     @Operation(summary = "Одобрить заявку на вывод")
     @PatchMapping("/withdrawals/{id}/approve")
-    public ResponseEntity<ApiResponse<Withdrawal>> approveWithdrawal(@PathVariable UUID id) {
-        return ResponseEntity.ok(ApiResponse.ok(withdrawalService.approve(id)));
+    public ResponseEntity<ApiResponse<WithdrawalItemResponse>> approveWithdrawal(@PathVariable UUID id) {
+        Withdrawal w = withdrawalService.approve(id);
+        return ResponseEntity.ok(ApiResponse.ok(toWithdrawalItem(w)));
     }
 
     @Operation(summary = "Отклонить заявку на вывод",
             description = "Возвращает сумму на баланс пользователя.")
     @PatchMapping("/withdrawals/{id}/reject")
-    public ResponseEntity<ApiResponse<Withdrawal>> rejectWithdrawal(
+    public ResponseEntity<ApiResponse<WithdrawalItemResponse>> rejectWithdrawal(
             @PathVariable UUID id,
             @RequestBody Map<String, String> body) {
-        return ResponseEntity.ok(ApiResponse.ok(withdrawalService.reject(id, body.get("note"))));
+        Withdrawal w = withdrawalService.reject(id, body.get("note"));
+        return ResponseEntity.ok(ApiResponse.ok(toWithdrawalItem(w)));
+    }
+
+    private WithdrawalItemResponse toWithdrawalItem(Withdrawal w) {
+        return WithdrawalItemResponse.builder()
+                .id(w.getId())
+                .userId(w.getUser().getId())
+                .userName(w.getUser().getFirstName() + " " + w.getUser().getLastName())
+                .userPhone(w.getUser().getPhone())
+                .amount(w.getAmount())
+                .status(w.getStatus())
+                .method(w.getMethod().name())
+                .requisite(w.getRequisite())
+                .adminNote(w.getAdminNote())
+                .createdAt(w.getCreatedAt())
+                .reviewedAt(w.getReviewedAt())
+                .build();
     }
 
     @Operation(summary = "Распределение участников по уровням",
