@@ -621,7 +621,10 @@ public class TreeService {
                 .map(TreePosition::getUser);
 
         if (stackBranch.isPresent()) {
-            bfsPlaceAccelerator(user, stackBranch.get(), level);
+            // Drill down to the most specific subtree that contains the existing accelerator
+            // so BFS stays within that branch (e.g. Kanayim's subtree, not Bektur's entire tree)
+            User target = findAcceleratorStackTarget(stackBranch.get(), level);
+            bfsPlaceAccelerator(user, target, level);
         } else {
             // No existing accelerators — place in the weaker branch
             int leftSize  = branchSize(user, level, 1);
@@ -661,6 +664,39 @@ public class TreeService {
             }
         }
         return count;
+    }
+
+    /**
+     * Drills down from the given node following the path with existing accelerators.
+     * Stops at the node where:
+     * - one child has accelerators in its subtree (the "hot" side)
+     * - another child does NOT have accelerators AND still has a free slot itself
+     * This ensures BFS runs only within the targeted branch, not sibling branches.
+     */
+    private User findAcceleratorStackTarget(User node, int level) {
+        List<TreePosition> realChildren = treePositionRepo.findByParentAndLevelAndStage(node, level, 1)
+                .stream().filter(c -> !c.getIsAccelerator()).toList();
+
+        if (realChildren.isEmpty()) return node;
+
+        Optional<TreePosition> hotChild = realChildren.stream()
+                .filter(c -> countAcceleratorsInSubTree(c.getUser(), level) > 0)
+                .max(Comparator.comparingInt(c -> countAcceleratorsInSubTree(c.getUser(), level)));
+
+        if (hotChild.isEmpty()) return node;
+
+        // Check if a sibling exists without accelerators AND still has space for children
+        boolean siblingNeedsMore = realChildren.stream()
+                .filter(c -> !c.getUser().getId().equals(hotChild.get().getUser().getId()))
+                .anyMatch(c -> countAcceleratorsInSubTree(c.getUser(), level) == 0
+                        && treePositionRepo.findByParentAndLevelAndStage(c.getUser(), level, 1).size() < 2);
+
+        if (siblingNeedsMore) {
+            return node; // BFS from this node fills the sibling's empty slot(s)
+        }
+
+        // All siblings are full — drill deeper into the hot child
+        return findAcceleratorStackTarget(hotChild.get().getUser(), level);
     }
 
     private void bfsPlaceAccelerator(User owner, User branchRoot, int level) {
