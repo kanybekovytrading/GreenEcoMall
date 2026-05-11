@@ -71,7 +71,10 @@ public class NewsService {
     @Transactional(readOnly = true)
     public Page<NewsItemResponse> adminList(NewsStatus status, String search, int page, int size) {
         PageRequest pageable = PageRequest.of(page, size);
-        return newsRepository.findByStatusAndSearch(status, search, pageable).map(this::toItem);
+        if (search != null && !search.isBlank()) {
+            return newsRepository.findByStatusAndSearch(status, search, pageable).map(this::toItem);
+        }
+        return newsRepository.findByStatusAdmin(status, pageable).map(this::toItem);
     }
 
     @Transactional(readOnly = true)

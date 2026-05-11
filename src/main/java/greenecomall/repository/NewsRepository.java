@@ -34,9 +34,14 @@ public interface NewsRepository extends JpaRepository<News, UUID> {
     long countRecentForAudiences(@Param("audiences") List<NewsAudience> audiences,
                                   @Param("since") LocalDateTime since);
 
-    // Админ: поиск по заголовку/описанию
+    // Админ: без поиска
     @Query("SELECT n FROM News n WHERE (:status IS NULL OR n.status = :status) " +
-           "AND (cast(:search as String) IS NULL OR LOWER(n.title) LIKE LOWER(CONCAT('%', :search, '%')) " +
+           "ORDER BY n.pinned DESC, n.createdAt DESC")
+    Page<News> findByStatusAdmin(@Param("status") NewsStatus status, Pageable pageable);
+
+    // Админ: с поиском (вызывается только когда search != null)
+    @Query("SELECT n FROM News n WHERE (:status IS NULL OR n.status = :status) " +
+           "AND (LOWER(n.title) LIKE LOWER(CONCAT('%', :search, '%')) " +
            "OR LOWER(n.excerpt) LIKE LOWER(CONCAT('%', :search, '%'))) " +
            "ORDER BY n.pinned DESC, n.createdAt DESC")
     Page<News> findByStatusAndSearch(@Param("status") NewsStatus status,
