@@ -858,6 +858,10 @@ public class TreeService {
         if (stage == 2 || stage == 4) {
             return buildFixedPartnersTree(user, level, stage);
         }
+        // Stage 3 has no separate tree_positions rows — reuse stage=1 positions and check currentStage>=3
+        if (stage == 3) {
+            return buildStage3Tree(user, level);
+        }
 
         TreePosition rootPos = treePositionRepo.findByUserAndLevelAndStage(user, level, stage).orElse(null);
         StageStatus status = rootPos != null ? rootPos.getStageStatus() : StageStatus.WAITING;
@@ -893,6 +897,101 @@ public class TreeService {
                 .build();
     }
 
+    /**
+     * Stage 3 tree: те же 6 человек из Stage 2 (2 фикс. партнёра + их 4 партнёра).
+     * Прогресс = сколько из 6 достигли currentStage >= 3.
+     */
+    private TreeResponse buildStage3Tree(User user, int level) {
+        boolean userReachedStage3 = user.getCurrentLevel() > level
+                || (user.getCurrentLevel() == level && user.getCurrentStage() >= 3);
+
+        StageStatus rootStatus = !userReachedStage3 ? StageStatus.WAITING
+                : user.getCurrentStage() > 3 ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS;
+
+        if (!userReachedStage3) {
+            TreeNodeResponse rootNode = TreeNodeResponse.builder()
+                    .userId(user.getId())
+                    .name(user.getFirstName() + " " + user.getLastName())
+                    .initials(initials(user))
+                    .stageStatus(StageStatus.WAITING)
+                    .children(List.of())
+                    .build();
+            return TreeResponse.builder()
+                    .root(rootNode)
+                    .stageStatus(StageStatus.WAITING)
+                    .progress(TreeResponse.TreeProgress.builder().filled(0).total(6).build())
+                    .accelerator(TreeResponse.AcceleratorInfo.builder().active(false).build())
+                    .build();
+        }
+
+        // Tier 1: fixedPartnerLeft / fixedPartnerRight пользователя
+        User left1  = user.getFixedPartnerLeft()  != null
+                ? userRepository.findById(user.getFixedPartnerLeft().getId()).orElse(null)  : null;
+        User right1 = user.getFixedPartnerRight() != null
+                ? userRepository.findById(user.getFixedPartnerRight().getId()).orElse(null) : null;
+
+        int[] reached = {0};
+        List<TreeNodeResponse> rootChildren = new ArrayList<>();
+
+        if (left1 != null) rootChildren.add(buildStage3Node(left1, 1, reached));
+        if (right1 != null) rootChildren.add(buildStage3Node(right1, 2, reached));
+
+        TreeNodeResponse rootNode = TreeNodeResponse.builder()
+                .userId(user.getId())
+                .name(user.getFirstName() + " " + user.getLastName())
+                .initials(initials(user))
+                .stageStatus(rootStatus)
+                .children(rootChildren)
+                .build();
+
+        return TreeResponse.builder()
+                .root(rootNode)
+                .stageStatus(rootStatus)
+                .progress(TreeResponse.TreeProgress.builder().filled(reached[0]).total(6).build())
+                .accelerator(TreeResponse.AcceleratorInfo.builder().active(false).build())
+                .build();
+    }
+
+    /** Строит узел Stage-3 дерева: сам участник + его 2 фикс. партнёра (tier-2). */
+    private TreeNodeResponse buildStage3Node(User member, int position, int[] reached) {
+        boolean done = member.getCurrentStage() >= 3;
+        if (done) reached[0]++;
+
+        // Tier-2: партнёры этого участника
+        User subLeft  = member.getFixedPartnerLeft()  != null
+                ? userRepository.findById(member.getFixedPartnerLeft().getId()).orElse(null)  : null;
+        User subRight = member.getFixedPartnerRight() != null
+                ? userRepository.findById(member.getFixedPartnerRight().getId()).orElse(null) : null;
+
+        List<TreeNodeResponse> children = new ArrayList<>();
+        if (subLeft  != null) children.add(buildStage3LeafNode(subLeft,  1, reached));
+        if (subRight != null) children.add(buildStage3LeafNode(subRight, 2, reached));
+
+        return TreeNodeResponse.builder()
+                .userId(member.getId())
+                .name(member.getFirstName() + " " + member.getLastName())
+                .initials(initials(member))
+                .position(position)
+                .isAccelerator(false)
+                .stageStatus(done ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
+                .children(children)
+                .build();
+    }
+
+    private TreeNodeResponse buildStage3LeafNode(User member, int position, int[] reached) {
+        boolean done = member.getCurrentStage() >= 3;
+        if (done) reached[0]++;
+        return TreeNodeResponse.builder()
+                .userId(member.getId())
+                .name(member.getFirstName() + " " + member.getLastName())
+                .initials(initials(member))
+                .position(position)
+                .isAccelerator(false)
+                .stageStatus(done ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
+                .children(List.of())
+                .build();
+    }
+
     private TreeResponse buildFixedPartnersTree(User user, int level, int stage) {
         // Don't show partners if user hasn't reached this stage yet
         boolean userReachedStage = user.getCurrentLevel() > level
@@ -911,7 +1010,7 @@ public class TreeService {
                     .initials(initials(left))
                     .position(1)
                     .isAccelerator(false)
-                    .stageStatus(left.getCurrentStage() > stage ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
+                    .stageStatus(left.getCurrentStage() >= stage ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
                     .children(buildFixedPartnersTree(left, level, stage).root().children())
                     .build());
         }
@@ -922,7 +1021,7 @@ public class TreeService {
                     .initials(initials(right))
                     .position(2)
                     .isAccelerator(false)
-                    .stageStatus(right.getCurrentStage() > stage ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
+                    .stageStatus(right.getCurrentStage() >= stage ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
                     .children(buildFixedPartnersTree(right, level, stage).root().children())
                     .build());
         }

@@ -41,7 +41,7 @@ app:
     private-key-path: classpath:private_key.pem
     base-url: https://api.acquiring.averspay.kg
     webhook-url: https://greenecomall-dev.up.railway.app/api/payment/webhook
-    redirect-url: https://green-eco-mall-client-production.up.railway.app
+    redirect-url: https://green-eco-mall-client.up.railway.app
 
 sms:
   smspro:
