@@ -2,12 +2,18 @@ package greenecomall.controller;
 
 import greenecomall.dto.response.AdminStatsResponse;
 import greenecomall.dto.response.ApiResponse;
+import greenecomall.dto.response.NewsItemResponse;
+import greenecomall.dto.response.NewsStatsResponse;
 import greenecomall.dto.response.WithdrawalItemResponse;
 import greenecomall.dto.response.WithdrawalStatsResponse;
+import greenecomall.dto.request.CreateNewsRequest;
 import greenecomall.dto.request.RegisterRequest;
+import greenecomall.dto.request.UpdateNewsRequest;
 import greenecomall.entity.User;
 import greenecomall.entity.Withdrawal;
+import greenecomall.enums.NewsStatus;
 import greenecomall.service.AuthService;
+import greenecomall.service.NewsService;
 import greenecomall.service.PaymentService;
 import greenecomall.service.TreeService;
 import greenecomall.service.WithdrawalService;
@@ -52,6 +58,7 @@ public class AdminController {
     private final AuthService authService;
     private final PaymentService paymentService;
     private final TreeService treeService;
+    private final NewsService newsService;
 
     @Operation(summary = "Список пользователей",
             description = "Возвращает всех пользователей с пагинацией.")
@@ -253,6 +260,78 @@ public class AdminController {
     public ResponseEntity<ApiResponse<List<String>>> repairTreePositions() {
         List<String> report = treeService.repairMissingPositions();
         return ResponseEntity.ok(ApiResponse.ok(report));
+    }
+
+    // ── Новости ──────────────────────────────────────────────────────────────
+
+    @Operation(summary = "Статистика новостей — 4 карточки")
+    @GetMapping("/news/stats")
+    public ResponseEntity<ApiResponse<NewsStatsResponse>> getNewsStats() {
+        return ResponseEntity.ok(ApiResponse.ok(newsService.getStats()));
+    }
+
+    @Operation(summary = "Список всех новостей",
+            description = "status: DRAFT | SCHEDULED | PUBLISHED | ARCHIVED | null (все). search — поиск по заголовку.")
+    @GetMapping("/news")
+    public ResponseEntity<ApiResponse<org.springframework.data.domain.Page<NewsItemResponse>>> adminNewsList(
+            @RequestParam(required = false) NewsStatus status,
+            @RequestParam(required = false) String search,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(ApiResponse.ok(newsService.adminList(status, search, page, size)));
+    }
+
+    @Operation(summary = "Создать и опубликовать новость")
+    @PostMapping("/news")
+    public ResponseEntity<ApiResponse<NewsItemResponse>> createNews(
+            @RequestBody @jakarta.validation.Valid CreateNewsRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(newsService.create(req)));
+    }
+
+    @Operation(summary = "Сохранить черновик")
+    @PostMapping("/news/draft")
+    public ResponseEntity<ApiResponse<NewsItemResponse>> saveDraft(
+            @RequestBody @jakarta.validation.Valid CreateNewsRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(newsService.saveDraft(req)));
+    }
+
+    @Operation(summary = "Редактировать новость")
+    @PutMapping("/news/{id}")
+    public ResponseEntity<ApiResponse<NewsItemResponse>> updateNews(
+            @PathVariable UUID id,
+            @RequestBody UpdateNewsRequest req) {
+        return ResponseEntity.ok(ApiResponse.ok(newsService.update(id, req)));
+    }
+
+    @Operation(summary = "Опубликовать черновик/запланированную")
+    @PatchMapping("/news/{id}/publish")
+    public ResponseEntity<ApiResponse<NewsItemResponse>> publishNews(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.ok(newsService.publish(id)));
+    }
+
+    @Operation(summary = "Архивировать новость")
+    @PatchMapping("/news/{id}/archive")
+    public ResponseEntity<ApiResponse<NewsItemResponse>> archiveNews(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.ok(newsService.archive(id)));
+    }
+
+    @Operation(summary = "Восстановить из архива (переводит в черновик)")
+    @PatchMapping("/news/{id}/restore")
+    public ResponseEntity<ApiResponse<NewsItemResponse>> restoreNews(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.ok(newsService.restore(id)));
+    }
+
+    @Operation(summary = "Закрепить / открепить новость")
+    @PatchMapping("/news/{id}/pin")
+    public ResponseEntity<ApiResponse<NewsItemResponse>> togglePin(@PathVariable UUID id) {
+        return ResponseEntity.ok(ApiResponse.ok(newsService.togglePin(id)));
+    }
+
+    @Operation(summary = "Удалить новость навсегда")
+    @DeleteMapping("/news/{id}")
+    public ResponseEntity<ApiResponse<Void>> deleteNews(@PathVariable UUID id) {
+        newsService.delete(id);
+        return ResponseEntity.ok(ApiResponse.ok());
     }
 
     private String escape(String value) {
