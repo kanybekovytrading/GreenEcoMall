@@ -27,7 +27,7 @@ public class News {
     @Column(nullable = false)
     private String title;
 
-    @Column(nullable = false, columnDefinition = "TEXT")
+    @Column(columnDefinition = "TEXT")
     private String excerpt;
 
     @Column(columnDefinition = "TEXT")

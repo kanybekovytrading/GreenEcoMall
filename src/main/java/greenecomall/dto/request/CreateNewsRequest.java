@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 
 public record CreateNewsRequest(
         @NotBlank String title,
-        @NotBlank String excerpt,
+        String excerpt,
         @JsonAlias("content") String body,
         @NotNull NewsCategory category,
         NewsAudience audience,           // null → ALL
