@@ -39,7 +39,7 @@ public class AuthService {
 
     private static final String REFERRAL_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     private static final BigDecimal FEE_STANDARD   = new BigDecimal("1");
-    private static final BigDecimal FEE_FAST_START = new BigDecimal("2");
+    private static final BigDecimal FEE_FAST_START = new BigDecimal("1");
 
     @org.springframework.beans.factory.annotation.Value("${app.admin.referral-code:GEMADMIN}")
     private String adminReferralCode;
