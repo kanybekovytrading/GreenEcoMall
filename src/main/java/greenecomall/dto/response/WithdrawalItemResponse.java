@@ -17,6 +17,7 @@ public record WithdrawalItemResponse(
         WithdrawalStatus status,
         String method,
         String requisite,
+        String bankName,
         String adminNote,
         LocalDateTime createdAt,
         LocalDateTime reviewedAt
