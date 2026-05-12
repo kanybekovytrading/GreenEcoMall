@@ -692,15 +692,18 @@ public class TreeService {
      *
      * Priority:
      * 1. If user's own tree already has an accelerator → stack into that branch.
-     * 2. If an ancestor's tree already has accelerators → stack into that same branch
-     *    (so all accelerators from related users converge in one place).
-     * 3. Otherwise: place in the weaker (smaller) branch of user's own tree.
+     * 2. If an ancestor's tree already has accelerators → stack into that same branch.
+     * 3. No existing accelerators anywhere:
+     *    a. If user's own Stage-1 tree is still incomplete (<6 real members) → place in own weak branch.
+     *    b. If user's own Stage-1 tree is already COMPLETE (6 real members) → walk UP to the nearest
+     *       ancestor whose subtree has free Stage-1 slots, then BFS left-to-right from there.
+     *       This avoids drilling into tier-3+ of an already-complete matrix.
      */
     @Transactional
     public void placeAccelerator(User user, int level) {
         List<TreePosition> directChildren = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
 
-        // 1. Find the branch in user's OWN tree that already has the most accelerators (stack there)
+        // 1. Stack if own tree has existing accelerators
         Optional<User> stackBranch = directChildren.stream()
                 .filter(c -> !c.getIsAccelerator())
                 .filter(c -> countAcceleratorsInSubTree(c.getUser(), level) > 0)
@@ -711,8 +714,7 @@ public class TreeService {
             User target = findAcceleratorStackTarget(stackBranch.get(), level);
             bfsPlaceAccelerator(user, target, level);
         } else {
-            // 2. No accelerators in user's own tree — walk UP the tree to find an ancestor
-            //    whose tree already has accelerators, then stack in that same branch.
+            // 2. Stack with ancestor's existing accelerators
             User ancestor = findAncestorWithAccelerators(user, level);
             if (ancestor != null) {
                 List<TreePosition> ancestorChildren = treePositionRepo.findByParentAndLevelAndStage(ancestor, level, 1);
@@ -728,8 +730,28 @@ public class TreeService {
                     placeInOwnWeakBranch(user, level, directChildren);
                 }
             } else {
-                // 3. No accelerators anywhere in the tree hierarchy — place in user's own weak branch
-                placeInOwnWeakBranch(user, level, directChildren);
+                // 3. No accelerators anywhere — check if own tree is already complete
+                long realTier1 = directChildren.stream().filter(c -> !c.getIsAccelerator()).count();
+                long realTier2 = directChildren.stream()
+                        .filter(c -> !c.getIsAccelerator())
+                        .mapToLong(c -> treePositionRepo.findByParentAndLevelAndStage(c.getUser(), level, 1)
+                                .stream().filter(t -> !t.getIsAccelerator()).count())
+                        .sum();
+                boolean ownTreeComplete = (realTier1 + realTier2 >= 6);
+
+                if (ownTreeComplete) {
+                    // Own Stage-1 matrix is full — walk UP to nearest ancestor with free slots
+                    // and BFS left-to-right from there (avoids drilling into tier-3+ of a full matrix)
+                    User upline = findNearestAncestorWithFreeSlots(user, level);
+                    if (upline != null) {
+                        bfsPlaceAccelerator(user, upline, level);
+                    } else {
+                        // Last resort: no upline with free slots found, use own tree
+                        placeInOwnWeakBranch(user, level, directChildren);
+                    }
+                } else {
+                    placeInOwnWeakBranch(user, level, directChildren);
+                }
             }
         }
 
@@ -779,6 +801,48 @@ public class TreeService {
             parent = parentPos.get().getParent();
         }
         return null;
+    }
+
+    /**
+     * Walks UP the Stage-1 parent chain from user and returns the nearest ancestor
+     * whose subtree contains at least one node with fewer than 2 real (non-accelerator) children.
+     * Used to redirect accelerator placement away from a complete Stage-1 tree.
+     */
+    private User findNearestAncestorWithFreeSlots(User user, int level) {
+        Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(user, level, 1);
+        if (pos.isEmpty() || pos.get().getParent() == null) return null;
+
+        User parent = pos.get().getParent();
+        while (parent != null) {
+            User fresh = userRepository.findById(parent.getId()).orElse(null);
+            if (fresh == null) break;
+
+            if (hasFreeSlotsInSubTree(fresh, level)) return fresh;
+
+            Optional<TreePosition> parentPos = treePositionRepo.findByUserAndLevelAndStage(fresh, level, 1);
+            if (parentPos.isEmpty() || parentPos.get().getParent() == null) break;
+            parent = parentPos.get().getParent();
+        }
+        return null;
+    }
+
+    /**
+     * Returns true if any node in root's Stage-1 subtree has fewer than 2 real children
+     * (i.e. there is at least one free slot where an accelerator could be placed meaningfully).
+     */
+    private boolean hasFreeSlotsInSubTree(User root, int level) {
+        Queue<User> queue = new ArrayDeque<>();
+        Set<UUID> visited = new HashSet<>();
+        queue.add(root);
+        while (!queue.isEmpty()) {
+            User cur = queue.poll();
+            if (!visited.add(cur.getId())) continue;
+            List<TreePosition> children = treePositionRepo.findByParentAndLevelAndStage(cur, level, 1);
+            long realChildren = children.stream().filter(c -> !c.getIsAccelerator()).count();
+            if (realChildren < 2) return true;
+            children.stream().filter(c -> !c.getIsAccelerator()).forEach(c -> queue.add(c.getUser()));
+        }
+        return false;
     }
 
     private int countAcceleratorsInSubTree(User root, int level) {
