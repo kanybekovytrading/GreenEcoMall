@@ -839,7 +839,8 @@ public class TreeService {
             if (!visited.add(cur.getId())) continue;
             List<TreePosition> children = treePositionRepo.findByParentAndLevelAndStage(cur, level, 1);
             long realChildren = children.stream().filter(c -> !c.getIsAccelerator()).count();
-            if (realChildren < 2) return true;
+            // Only count as "free" if placing here would eventually be cleaned up
+            if (realChildren < 2 && canAcceleratorBeCleanedUp(cur, level)) return true;
             children.stream().filter(c -> !c.getIsAccelerator()).forEach(c -> queue.add(c.getUser()));
         }
         return false;
@@ -907,6 +908,16 @@ public class TreeService {
 
             int freeSlot = !hasLeft ? 1 : !hasRight ? 2 : 0;
             if (freeSlot != 0) {
+                // Skip slots inside already-completed matrices: when both `current` and its
+                // tree-parent are past Stage 1, checkStage1UpTheChain will return early and
+                // the accelerator will never be removed (stuck forever).
+                if (!canAcceleratorBeCleanedUp(current, level)) {
+                    children.stream()
+                            .filter(c -> !c.getIsAccelerator())
+                            .sorted(Comparator.comparingInt(TreePosition::getPosition))
+                            .forEach(c -> queue.add(c.getUser()));
+                    continue;
+                }
                 treePositionRepo.save(TreePosition.builder()
                         .user(owner)
                         .parent(current)
@@ -916,7 +927,6 @@ public class TreeService {
                         .isAccelerator(true)
                         .stageStatus(StageStatus.IN_PROGRESS)
                         .build());
-                // Accelerator fills a real slot — check if parent or grandparent completed Stage 1
                 checkStage1UpTheChain(current, level);
                 return;
             }
@@ -926,6 +936,26 @@ public class TreeService {
                     .sorted(Comparator.comparingInt(TreePosition::getPosition))
                     .forEach(c -> queue.add(c.getUser()));
         }
+    }
+
+    /**
+     * Returns true if placing an accelerator as a child of `node` will eventually
+     * be cleaned up by a Stage-1 completion event.
+     * This is the case when `node` itself OR its direct parent in the tree is still
+     * at Stage 1 — so checkStage1UpTheChain will find an active matrix to complete.
+     */
+    private boolean canAcceleratorBeCleanedUp(User node, int level) {
+        User fresh = userRepository.findById(node.getId()).orElse(node);
+        if (fresh.getCurrentLevel() == level && fresh.getCurrentStage() == 1) return true;
+
+        Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(node, level, 1);
+        if (pos.isPresent() && pos.get().getParent() != null) {
+            User parent = userRepository.findById(pos.get().getParent().getId()).orElse(null);
+            if (parent != null && parent.getCurrentLevel() == level && parent.getCurrentStage() == 1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
