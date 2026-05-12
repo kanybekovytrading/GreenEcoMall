@@ -401,6 +401,34 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok());
     }
 
+    @Operation(
+            summary = "Добавить медиа к новости",
+            description = """
+                    Прикрепляет загруженный файл к новости.
+
+                    **Шаг 1:** Загрузи файл через `POST /api/upload?type=NEWS_MEDIA` → получишь `objectKey`.
+                    **Шаг 2:** Передай `objectKey` в это тело: `{"objectKey": "news/media/uuid.jpg"}`.
+
+                    Возвращает новый медиа-объект с presigned URL.
+                    """
+    )
+    @PostMapping("/news/{id}/media")
+    public ResponseEntity<ApiResponse<greenecomall.dto.response.NewsMediaResponse>> addNewsMedia(
+            @PathVariable UUID id,
+            @RequestBody java.util.Map<String, String> body) {
+        String objectKey = body.get("objectKey");
+        return ResponseEntity.ok(ApiResponse.ok(newsService.addMedia(id, objectKey)));
+    }
+
+    @Operation(summary = "Удалить медиа из новости", description = "Удаляет медиа-вложение из новости и из хранилища.")
+    @DeleteMapping("/news/{id}/media/{mediaId}")
+    public ResponseEntity<ApiResponse<Void>> deleteNewsMedia(
+            @PathVariable UUID id,
+            @PathVariable UUID mediaId) {
+        newsService.deleteMedia(id, mediaId);
+        return ResponseEntity.ok(ApiResponse.ok());
+    }
+
     private String escape(String value) {
         if (value == null) return "";
         if (value.contains(",") || value.contains("\"") || value.contains("\n")) {

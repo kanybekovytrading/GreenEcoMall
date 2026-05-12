@@ -6,6 +6,7 @@ import greenecomall.enums.NewsStatus;
 import lombok.Builder;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Builder
@@ -23,5 +24,7 @@ public record NewsDetailResponse(
         String coverIcon,
         LocalDateTime publishAt,
         LocalDateTime createdAt,
-        long viewCount
+        long viewCount,
+        List<NewsMediaResponse> media,
+        long commentCount
 ) {}

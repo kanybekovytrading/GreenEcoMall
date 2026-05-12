@@ -1,17 +1,24 @@
 package greenecomall.service;
 
+import greenecomall.dto.request.CreateCommentRequest;
 import greenecomall.dto.request.CreateNewsRequest;
 import greenecomall.dto.request.UpdateNewsRequest;
+import greenecomall.dto.response.NewsCommentResponse;
 import greenecomall.dto.response.NewsDetailResponse;
 import greenecomall.dto.response.NewsItemResponse;
+import greenecomall.dto.response.NewsMediaResponse;
 import greenecomall.dto.response.NewsStatsResponse;
 import greenecomall.entity.News;
+import greenecomall.entity.NewsComment;
+import greenecomall.entity.NewsMedia;
 import greenecomall.entity.User;
 import greenecomall.enums.NewsAudience;
 import greenecomall.enums.NewsCategory;
 import greenecomall.enums.NewsStatus;
 import greenecomall.exception.BusinessException;
 import greenecomall.exception.ErrorCode;
+import greenecomall.repository.NewsCommentRepository;
+import greenecomall.repository.NewsMediaRepository;
 import greenecomall.repository.NewsRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -30,6 +37,9 @@ import java.util.UUID;
 public class NewsService {
 
     private final NewsRepository newsRepository;
+    private final NewsMediaRepository newsMediaRepository;
+    private final NewsCommentRepository newsCommentRepository;
+    private final MinioService minioService;
 
     // ── Клиентские ──────────────────────────────────────────────────────────
 
@@ -64,6 +74,66 @@ public class NewsService {
     public long countUnread(User user) {
         List<NewsAudience> allowed = audiencesForUser(user);
         return newsRepository.countRecentForAudiences(allowed, LocalDateTime.now().minusDays(7));
+    }
+
+    // ── Комментарии ─────────────────────────────────────────────────────────
+
+    @Transactional
+    public NewsCommentResponse addComment(UUID newsId, User author, CreateCommentRequest req) {
+        News news = findPublishedOrThrow(newsId);
+        NewsComment comment = newsCommentRepository.save(NewsComment.builder()
+                .news(news)
+                .author(author)
+                .text(req.text())
+                .build());
+        return toComment(comment, author.getId());
+    }
+
+    @Transactional(readOnly = true)
+    public Page<NewsCommentResponse> getComments(UUID newsId, User viewer, int page, int size) {
+        News news = findPublishedOrThrow(newsId);
+        PageRequest pageable = PageRequest.of(page, size, Sort.by("createdAt").ascending());
+        return newsCommentRepository.findByNewsOrderByCreatedAtAsc(news, pageable)
+                .map(c -> toComment(c, viewer.getId()));
+    }
+
+    @Transactional
+    public void deleteComment(UUID newsId, UUID commentId, User user) {
+        NewsComment comment = newsCommentRepository.findById(commentId)
+                .orElseThrow(() -> BusinessException.of(ErrorCode.USER_NOT_FOUND));
+        if (!comment.getNews().getId().equals(newsId)) {
+            throw BusinessException.of(ErrorCode.USER_NOT_FOUND);
+        }
+        boolean isAdmin = user.getRole() != null && user.getRole().name().equals("ADMIN");
+        if (!isAdmin && !comment.getAuthor().getId().equals(user.getId())) {
+            throw BusinessException.of(ErrorCode.FORBIDDEN);
+        }
+        newsCommentRepository.delete(comment);
+    }
+
+    // ── Медиа (только админ) ─────────────────────────────────────────────────
+
+    @Transactional
+    public NewsMediaResponse addMedia(UUID newsId, String objectKey) {
+        News news = findOrThrow(newsId);
+        int order = newsMediaRepository.findByNewsOrderBySortOrderAsc(news).size();
+        NewsMedia media = newsMediaRepository.save(NewsMedia.builder()
+                .news(news)
+                .objectKey(objectKey)
+                .sortOrder(order)
+                .build());
+        return toMediaResponse(media);
+    }
+
+    @Transactional
+    public void deleteMedia(UUID newsId, UUID mediaId) {
+        NewsMedia media = newsMediaRepository.findById(mediaId)
+                .orElseThrow(() -> BusinessException.of(ErrorCode.USER_NOT_FOUND));
+        if (!media.getNews().getId().equals(newsId)) {
+            throw BusinessException.of(ErrorCode.USER_NOT_FOUND);
+        }
+        minioService.delete(media.getObjectKey());
+        newsMediaRepository.delete(media);
     }
 
     // ── Админские ───────────────────────────────────────────────────────────
@@ -186,7 +256,6 @@ public class NewsService {
         newsRepository.deleteById(id);
     }
 
-    // Авто-публикация запланированных новостей (каждую минуту)
     @Scheduled(fixedDelay = 60_000)
     @Transactional
     public void publishScheduled() {
@@ -202,6 +271,14 @@ public class NewsService {
     private News findOrThrow(UUID id) {
         return newsRepository.findById(id)
                 .orElseThrow(() -> BusinessException.of(ErrorCode.USER_NOT_FOUND));
+    }
+
+    private News findPublishedOrThrow(UUID id) {
+        News news = findOrThrow(id);
+        if (news.getStatus() != NewsStatus.PUBLISHED) {
+            throw BusinessException.of(ErrorCode.USER_NOT_FOUND);
+        }
+        return news;
     }
 
     private List<NewsAudience> audiencesForUser(User user) {
@@ -230,10 +307,13 @@ public class NewsService {
                 .publishAt(n.getPublishAt())
                 .createdAt(n.getCreatedAt())
                 .viewCount(n.getViewCount())
+                .commentCount(newsCommentRepository.countByNews(n))
                 .build();
     }
 
     private NewsDetailResponse toDetail(News n) {
+        List<NewsMediaResponse> media = newsMediaRepository.findByNewsOrderBySortOrderAsc(n)
+                .stream().map(this::toMediaResponse).toList();
         return NewsDetailResponse.builder()
                 .id(n.getId())
                 .title(n.getTitle())
@@ -249,6 +329,32 @@ public class NewsService {
                 .publishAt(n.getPublishAt())
                 .createdAt(n.getCreatedAt())
                 .viewCount(n.getViewCount())
+                .media(media)
+                .commentCount(newsCommentRepository.countByNews(n))
+                .build();
+    }
+
+    private NewsMediaResponse toMediaResponse(NewsMedia m) {
+        return NewsMediaResponse.builder()
+                .id(m.getId())
+                .url(minioService.presign(m.getObjectKey()))
+                .sortOrder(m.getSortOrder())
+                .createdAt(m.getCreatedAt())
+                .build();
+    }
+
+    private NewsCommentResponse toComment(NewsComment c, UUID viewerId) {
+        User author = c.getAuthor();
+        String initials = String.valueOf(author.getFirstName().charAt(0)).toUpperCase()
+                + String.valueOf(author.getLastName().charAt(0)).toUpperCase();
+        return NewsCommentResponse.builder()
+                .id(c.getId())
+                .authorId(author.getId())
+                .authorName(author.getFirstName() + " " + author.getLastName())
+                .authorInitials(initials)
+                .text(c.getText())
+                .ownComment(author.getId().equals(viewerId))
+                .createdAt(c.getCreatedAt())
                 .build();
     }
 }

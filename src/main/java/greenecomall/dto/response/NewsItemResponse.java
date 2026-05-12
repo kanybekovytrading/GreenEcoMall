@@ -22,5 +22,6 @@ public record NewsItemResponse(
         String coverIcon,
         LocalDateTime publishAt,
         LocalDateTime createdAt,
-        long viewCount
+        long viewCount,
+        long commentCount
 ) {}

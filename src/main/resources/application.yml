@@ -43,6 +43,13 @@ app:
     webhook-url: https://greenecomall-dev.up.railway.app/api/payment/webhook
     redirect-url: https://green-eco-mall-client.up.railway.app
 
+minio:
+  url: ${AWS_ENDPOINT_URL:https://fly.storage.tigris.dev}
+  access-key: ${AWS_ACCESS_KEY_ID:changeme}
+  secret-key: ${AWS_SECRET_ACCESS_KEY:changeme}
+  bucket: ${AWS_S3_BUCKET_NAME:greenecomall}
+  region: ${AWS_DEFAULT_REGION:auto}
+
 sms:
   smspro:
     enabled: false
