@@ -1369,13 +1369,16 @@ public class TreeService {
             }
         }
 
-        // Сортируем: фикс. партнёры первыми, затем по убыванию прогресса
+        // Сортируем: фикс. партнёры первыми, затем по убыванию прогресса; берём только топ-2
         entries.sort(Comparator
                 .comparingInt((greenecomall.dto.response.Stage2RaceResponse.RaceEntry e) -> e.isFixedPartner() ? 0 : 1)
                 .thenComparingInt(e -> -e.filled()));
 
+        List<greenecomall.dto.response.Stage2RaceResponse.RaceEntry> top2 =
+                entries.stream().limit(2).collect(java.util.stream.Collectors.toList());
+
         return greenecomall.dto.response.Stage2RaceResponse.builder()
-                .candidates(entries)
+                .candidates(top2)
                 .stage2Completed(stage2Completed)
                 .build();
     }
