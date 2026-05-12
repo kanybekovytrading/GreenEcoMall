@@ -39,6 +39,7 @@ import jakarta.validation.Valid;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -263,6 +264,70 @@ public class AdminController {
         List<String> report = treeService.repairMissingPositions();
         return ResponseEntity.ok(ApiResponse.ok(report));
     }
+
+    @Operation(summary = "Repair: завершить Stage 1 для участников, у которых матрица уже полная",
+            description = "Находит всех Stage-1 пользователей где tier1+tier2 >= 6, но onStage1Completed не был вызван (последний слот заняли ускорители). Вызывает переход вручную.")
+    @PostMapping("/repair/stage1-completions")
+    public ResponseEntity<ApiResponse<List<String>>> repairStage1Completions() {
+        List<String> report = treeService.repairMissingStage1Completions();
+        return ResponseEntity.ok(ApiResponse.ok(report));
+    }
+
+    // ── Тестовые пользователи ────────────────────────────────────────────────
+
+    @Operation(
+            summary = "Создать тестовых пользователей (быстрый тест дерева)",
+            description = """
+                    Создаёт и сразу активирует список пользователей без OTP и без оплаты.
+                    Телефон, пароль и пасспорт генерируются автоматически.
+
+                    Пример тела запроса:
+                    ```json
+                    [
+                      {"firstName": "Алия",   "lastName": "Тест1", "inviterCode": "AZAMAT123"},
+                      {"firstName": "Бакыт",  "lastName": "Тест2", "inviterCode": "ALIYA_REF"},
+                      {"firstName": "Дамир",  "lastName": "Тест3", "inviterCode": "ALIYA_REF"}
+                    ]
+                    ```
+                    Ответ: имя, userId, referralCode — используй referralCode следующих в цепочке.
+                    """)
+    @PostMapping("/test/create-users")
+    public ResponseEntity<ApiResponse<List<Map<String, String>>>> createTestUsers(
+            @RequestBody List<TestUserEntry> entries) {
+
+        List<Map<String, String>> results = new ArrayList<>();
+        long base = System.currentTimeMillis() % 10_000_000L;
+
+        for (int i = 0; i < entries.size(); i++) {
+            TestUserEntry e = entries.get(i);
+            String phone = "+99670" + String.format("%07d", base + i);
+
+            greenecomall.dto.request.RegisterRequest req = new greenecomall.dto.request.RegisterRequest(
+                    e.firstName(), e.lastName(),
+                    phone,
+                    "TEST" + (base + i),
+                    "test123456",
+                    e.inviterCode(),
+                    null,
+                    "testword"
+            );
+
+            greenecomall.dto.response.RegisterResponse reg = authService.registerByAdmin(req);
+            paymentService.activateUserById(reg.userId());
+
+            greenecomall.entity.User created = userRepository.findById(reg.userId()).orElseThrow();
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("name", e.firstName() + " " + e.lastName());
+            row.put("userId", reg.userId().toString());
+            row.put("phone", phone);
+            row.put("referralCode", created.getReferralCode());
+            results.add(row);
+        }
+
+        return ResponseEntity.ok(ApiResponse.ok(results));
+    }
+
+    public record TestUserEntry(String firstName, String lastName, String inviterCode) {}
 
     // ── Новости ──────────────────────────────────────────────────────────────
 
