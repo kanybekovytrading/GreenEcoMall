@@ -580,10 +580,18 @@ public class TreeService {
      * When user completes Stage 1 they fill a Stage 2 slot under the closest ancestor
      * in the tree who is currently on Stage 2. Walks UP the tree_positions parent chain
      * so tier-2+ completers correctly bubble up past intermediate nodes.
+     *
+     * Fallback: if no ancestor on Stage 2 found (e.g. everyone above already passed Stage 2),
+     * places the user under the earliest Fast Start graduate currently waiting on Stage 2.
      */
     private void fillStage2UnderInviter(User user, int level) {
         User ancestor = findFirstStage2Ancestor(user, level);
-        if (ancestor == null) return;
+
+        if (ancestor == null) {
+            // Fallback: place under earliest Fast Start graduate on Stage 2
+            placeUnderFastStartGraduate(user, level);
+            return;
+        }
 
         User locked = userRepository.findByIdForUpdate(ancestor.getId())
                 .orElseThrow(() -> new IllegalStateException("Stage2 ancestor not found: " + ancestor.getId()));
@@ -608,6 +616,43 @@ public class TreeService {
 
             onStage2Completed(locked, level);
         }
+    }
+
+    /**
+     * Fallback placement: when a user completed Stage 1 but has no ancestor on Stage 2,
+     * place them under the earliest-activated Fast Start graduate who is on Stage 2
+     * and still has an empty fixed partner slot (left before right).
+     */
+    private void placeUnderFastStartGraduate(User user, int level) {
+        List<User> candidates = userRepository.findFastStartStage2WithEmptySlots();
+
+        for (User candidate : candidates) {
+            User locked = userRepository.findByIdForUpdate(candidate.getId()).orElse(null);
+            if (locked == null || locked.getCurrentStage() != 2) continue;
+
+            if (locked.getFixedPartnerLeft() == null) {
+                locked.setFixedPartnerLeft(user);
+                userRepository.save(locked);
+                notificationService.send(locked, NotificationType.NEW_MEMBER,
+                        "Этап 2 — левая позиция занята",
+                        user.getFirstName() + " " + user.getLastName() + " встал на Этап 2 (слева)");
+                log.info("Fallback Stage2: {} placed as LEFT partner of FastStart graduate {}",
+                        user.getId(), locked.getId());
+                return;
+            } else if (locked.getFixedPartnerRight() == null) {
+                locked.setFixedPartnerRight(user);
+                userRepository.save(locked);
+                notificationService.send(locked, NotificationType.NEW_MEMBER,
+                        "Этап 2 — правая позиция занята",
+                        user.getFirstName() + " " + user.getLastName() + " встал на Этап 2 (справа)");
+                onStage2Completed(locked, level);
+                log.info("Fallback Stage2: {} placed as RIGHT partner of FastStart graduate {}",
+                        user.getId(), locked.getId());
+                return;
+            }
+        }
+
+        log.warn("Stage2 fallback: no Fast Start graduate with empty slot found for user {}", user.getId());
     }
 
     /**

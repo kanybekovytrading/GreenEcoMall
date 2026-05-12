@@ -46,6 +46,10 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     @Query("SELECT u FROM User u WHERE u.currentLevel = 1 AND u.currentStage = 2 AND u.accountStatus = 'ACTIVE' AND (u.fixedPartnerLeft IS NULL OR u.fixedPartnerRight IS NULL) ORDER BY u.activatedAt ASC")
     List<User> findStage2UsersWithEmptySlots();
 
+    // Fast Start graduates on Stage 2 with empty slots, sorted by activatedAt (earliest first)
+    @Query("SELECT u FROM User u WHERE u.registrationPlan = 'FAST_START' AND u.currentStage = 2 AND u.accountStatus = 'ACTIVE' AND (u.fixedPartnerLeft IS NULL OR u.fixedPartnerRight IS NULL) ORDER BY u.activatedAt ASC")
+    List<User> findFastStartStage2WithEmptySlots();
+
     // Next sequential number for Fast Start queue
     @Query("SELECT COALESCE(MAX(u.fastStartNumber), 0) + 1 FROM User u WHERE u.registrationPlan = 'FAST_START'")
     int getNextFastStartNumber();
