@@ -198,19 +198,25 @@ public class TreeService {
         markStageComplete(user, level, 1);
 
         if (bonusService != null) {
-            bonusService.createStageBonuses(user, level, 1);
+            List<TreePosition> tier1Positions = treePositionRepo
+                    .findByParentAndLevelAndStage(user, level, 1);
 
-            // 1250 инвайтеру каждого tier-1 ребёнка, только если инвайтер != сам завершивший
-            // (tier-1 под завершившим уже покрыты его 5000; tier-2+ получат бонус
-            //  когда их tier-1 родитель завершит свой Этап 1)
-            List<User> tier1Members = treePositionRepo
-                    .findByParentAndLevelAndStage(user, level, 1).stream()
+            List<User> externalTier1 = tier1Positions.stream()
                     .filter(tp -> !tp.getIsAccelerator())
                     .map(TreePosition::getUser)
                     .filter(m -> m.getInviter() != null
                               && !m.getInviter().getId().equals(user.getId()))
                     .collect(java.util.stream.Collectors.toList());
-            bonusService.createMemberReferralBonuses(level, tier1Members);
+
+            List<User> tier2Members = tier1Positions.stream()
+                    .filter(tp -> !tp.getIsAccelerator())
+                    .flatMap(tp -> treePositionRepo
+                            .findByParentAndLevelAndStage(tp.getUser(), level, 1).stream())
+                    .filter(tp -> !tp.getIsAccelerator())
+                    .map(TreePosition::getUser)
+                    .collect(java.util.stream.Collectors.toList());
+
+            bonusService.createStage1Bonuses(user, level, externalTier1, tier2Members);
         }
 
         // Ускоритель выполнил свою задачу — удаляем его из матрицы

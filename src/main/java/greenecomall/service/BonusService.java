@@ -53,7 +53,8 @@ public class BonusService {
     private static final BigDecimal STAGE4_BONUS_L4 = new BigDecimal("80000"); // USD
 
     // ─── Реферальный бонус за участника матрицы (Этап 1) ────────────────────
-    private static final BigDecimal MEMBER_REFERRAL = new BigDecimal("1250");
+    private static final BigDecimal MEMBER_REFERRAL   = new BigDecimal("1250");
+    private static final BigDecimal TIER2_DIVIDEND    = new BigDecimal("625");
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -111,17 +112,45 @@ public class BonusService {
     }
 
     /**
-     * Когда Этап 1 завершается, каждый прямой реферер участника матрицы получает 1250 сом.
-     * members — список 6 участников из матрицы завершителя (без ускорителей).
+     * Бонус за завершение Этапа 1:
+     *
+     * - root получает: max(0, baseBonus - externalTier1.size() × 1250)
+     *   (за каждого тир-1 участника с чужой реф-ссылкой вычитается 1250)
+     * - Реальный инвайтер каждого такого тир-1 получает 1250
+     * - За каждого тир-2 участника root ВСЕГДА получает 625 как дивиденд
+     *   (независимо от чьей реф-ссылки он пришёл)
+     *
+     * @param root          кто завершил Этап 1
+     * @param level         уровень
+     * @param externalTier1 тир-1 участники, чей inviter != root
+     * @param tier2Members  все реальные тир-2 участники матрицы root
      */
     @Transactional
-    public void createMemberReferralBonuses(int level, List<User> members) {
-        for (User member : members) {
+    public void createStage1Bonuses(User root, int level,
+                                    List<User> externalTier1, List<User> tier2Members) {
+        BigDecimal baseBonus = STAGE1_BONUS.getOrDefault(level, BigDecimal.ZERO);
+        BigDecimal deduction = MEMBER_REFERRAL.multiply(BigDecimal.valueOf(externalTier1.size()));
+        BigDecimal rootBonus = baseBonus.subtract(deduction).max(BigDecimal.ZERO);
+
+        if (rootBonus.compareTo(BigDecimal.ZERO) > 0) {
+            creditBonus(root, BonusType.STAGE, rootBonus, "KGS", level, 1,
+                    "Бонус за завершение Этапа 1 (Уровень " + level + ")"
+                    + (externalTier1.isEmpty() ? "" : " — " + externalTier1.size() + " уч. пришли по чужим реф."));
+        }
+
+        for (User member : externalTier1) {
             if (member.getInviter() == null) continue;
             User inviter = userRepository.findById(member.getInviter().getId())
                     .orElse(member.getInviter());
             creditBonus(inviter, BonusType.REFERRAL_DIRECT, MEMBER_REFERRAL, "KGS", level, 1,
-                    "Реферальный бонус за " + member.getFirstName() + " " + member.getLastName());
+                    "Реферальный бонус за " + member.getFirstName() + " " + member.getLastName()
+                    + " (Этап 1 завершил " + root.getFirstName() + " " + root.getLastName() + ")");
+        }
+
+        for (User member : tier2Members) {
+            creditBonus(root, BonusType.REFERRAL_INDIRECT, TIER2_DIVIDEND, "KGS", level, 1,
+                    "Дивиденд за участника 2-го яруса: "
+                    + member.getFirstName() + " " + member.getLastName());
         }
     }
 
