@@ -2,7 +2,7 @@ package greenecomall.controller;
 
 import greenecomall.dto.response.ApiResponse;
 import greenecomall.dto.response.BranchStatsResponse;
-
+import greenecomall.dto.response.Stage2RaceResponse;
 import greenecomall.dto.response.StagesOverviewResponse;
 import greenecomall.dto.response.TeamActivityResponse;
 import greenecomall.dto.response.TreeResponse;
@@ -124,6 +124,27 @@ public class TreeController {
                 "currentLevel", user.getCurrentLevel(),
                 "currentStage", user.getCurrentStage()
         )));
+    }
+
+    @Operation(
+            summary = "Гонка Этапа 2 — кто идёт впереди",
+            description = """
+                    Показывает всех участников твоего Stage 1 дерева (до 6 человек), отсортированных
+                    по прогрессу — у кого больше позиций заполнено в своём дереве, тот впереди.
+
+                    Используется на экране Этапа 2 чтобы показать кто скоро станет твоим
+                    фиксированным партнёром.
+
+                    - `isFixedPartner=true` — уже занял левый или правый слот
+                    - `fixedPartnerSlot` — 1=левый, 2=правый, 0=ещё не стал
+                    - `filled/total` — прогресс его дерева (0-6)
+                    """
+    )
+    @GetMapping("/stage2/race")
+    public ResponseEntity<ApiResponse<Stage2RaceResponse>> getStage2Race(
+            @AuthenticationPrincipal User user,
+            @Parameter(description = "Уровень 1-4", example = "1") @RequestParam(defaultValue = "1") int level) {
+        return ResponseEntity.ok(ApiResponse.ok(treeService.getStage2Race(user, level)));
     }
 
     @Operation(

@@ -606,14 +606,17 @@ public class TreeService {
      * Places a virtual accelerator in user's Stage-1 tree.
      * Only for Levels 1 and 2.
      *
-     * Priority: if any branch already has an accelerator → stack into that branch.
-     * Otherwise: place in the weaker (smaller) branch.
+     * Priority:
+     * 1. If user's own tree already has an accelerator → stack into that branch.
+     * 2. If an ancestor's tree already has accelerators → stack into that same branch
+     *    (so all accelerators from related users converge in one place).
+     * 3. Otherwise: place in the weaker (smaller) branch of user's own tree.
      */
     @Transactional
     public void placeAccelerator(User user, int level) {
         List<TreePosition> directChildren = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
 
-        // Find the branch that already has the most accelerators (stack there)
+        // 1. Find the branch in user's OWN tree that already has the most accelerators (stack there)
         Optional<User> stackBranch = directChildren.stream()
                 .filter(c -> !c.getIsAccelerator())
                 .filter(c -> countAcceleratorsInSubTree(c.getUser(), level) > 0)
@@ -621,33 +624,77 @@ public class TreeService {
                 .map(TreePosition::getUser);
 
         if (stackBranch.isPresent()) {
-            // Drill down to the most specific subtree that contains the existing accelerator
-            // so BFS stays within that branch (e.g. Kanayim's subtree, not Bektur's entire tree)
             User target = findAcceleratorStackTarget(stackBranch.get(), level);
             bfsPlaceAccelerator(user, target, level);
         } else {
-            // No existing accelerators — place in the weaker branch
-            int leftSize  = branchSize(user, level, 1);
-            int rightSize = branchSize(user, level, 2);
-            int weakSide  = (leftSize <= rightSize) ? 1 : 2;
-
-            Optional<TreePosition> weakDirectChild = directChildren.stream()
-                    .filter(c -> c.getPosition() == weakSide)
-                    .findFirst();
-
-            if (weakDirectChild.isEmpty()) {
-                treePositionRepo.save(TreePosition.builder()
-                        .user(user).parent(user).level(level).stage(1)
-                        .position(weakSide).isAccelerator(true)
-                        .stageStatus(StageStatus.IN_PROGRESS).build());
+            // 2. No accelerators in user's own tree — walk UP the tree to find an ancestor
+            //    whose tree already has accelerators, then stack in that same branch.
+            User ancestor = findAncestorWithAccelerators(user, level);
+            if (ancestor != null) {
+                List<TreePosition> ancestorChildren = treePositionRepo.findByParentAndLevelAndStage(ancestor, level, 1);
+                Optional<User> ancestorStack = ancestorChildren.stream()
+                        .filter(c -> !c.getIsAccelerator())
+                        .filter(c -> countAcceleratorsInSubTree(c.getUser(), level) > 0)
+                        .max(Comparator.comparingInt(c -> countAcceleratorsInSubTree(c.getUser(), level)))
+                        .map(TreePosition::getUser);
+                if (ancestorStack.isPresent()) {
+                    User target = findAcceleratorStackTarget(ancestorStack.get(), level);
+                    bfsPlaceAccelerator(user, target, level);
+                } else {
+                    placeInOwnWeakBranch(user, level, directChildren);
+                }
             } else {
-                bfsPlaceAccelerator(user, weakDirectChild.get().getUser(), level);
+                // 3. No accelerators anywhere in the tree hierarchy — place in user's own weak branch
+                placeInOwnWeakBranch(user, level, directChildren);
             }
         }
 
         notificationService.send(user, NotificationType.ACCELERATOR_PLACED,
                 "Ускоритель размещён",
                 "Система автоматически разместила ускоритель в команду.");
+    }
+
+    private void placeInOwnWeakBranch(User user, int level, List<TreePosition> directChildren) {
+        int leftSize  = branchSize(user, level, 1);
+        int rightSize = branchSize(user, level, 2);
+        int weakSide  = (leftSize <= rightSize) ? 1 : 2;
+
+        Optional<TreePosition> weakDirectChild = directChildren.stream()
+                .filter(c -> c.getPosition() == weakSide)
+                .findFirst();
+
+        if (weakDirectChild.isEmpty()) {
+            treePositionRepo.save(TreePosition.builder()
+                    .user(user).parent(user).level(level).stage(1)
+                    .position(weakSide).isAccelerator(true)
+                    .stageStatus(StageStatus.IN_PROGRESS).build());
+        } else {
+            bfsPlaceAccelerator(user, weakDirectChild.get().getUser(), level);
+        }
+    }
+
+    /**
+     * Walks UP the Stage-1 parent chain from user to find the nearest ancestor
+     * whose direct children have existing accelerators somewhere in their sub-trees.
+     * Returns that ancestor so its tree context can be used for stacking.
+     */
+    private User findAncestorWithAccelerators(User user, int level) {
+        Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(user, level, 1);
+        if (pos.isEmpty() || pos.get().getParent() == null) return null;
+
+        User parent = pos.get().getParent();
+        while (parent != null) {
+            List<TreePosition> children = treePositionRepo.findByParentAndLevelAndStage(parent, level, 1);
+            boolean anyBranchHasAccelerators = children.stream()
+                    .filter(c -> !c.getIsAccelerator())
+                    .anyMatch(c -> countAcceleratorsInSubTree(c.getUser(), level) > 0);
+            if (anyBranchHasAccelerators) return parent;
+
+            Optional<TreePosition> parentPos = treePositionRepo.findByUserAndLevelAndStage(parent, level, 1);
+            if (parentPos.isEmpty() || parentPos.get().getParent() == null) break;
+            parent = parentPos.get().getParent();
+        }
+        return null;
     }
 
     private int countAcceleratorsInSubTree(User root, int level) {
@@ -1246,6 +1293,74 @@ public class TreeService {
                         .right(toPartnerSlotStage4(right, rightFilledAt))
                         .build())
                 .completedAt(completedAt)
+                .build();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // API: STAGE 2 RACE — кто идёт впереди в гонке за фикс. позицию
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public greenecomall.dto.response.Stage2RaceResponse getStage2Race(User user, int level) {
+        boolean stage2Completed = user.getCurrentStage() > 2
+                || user.getFixedPartnerLeft() != null && user.getFixedPartnerRight() != null;
+
+        UUID leftId  = user.getFixedPartnerLeft()  != null ? user.getFixedPartnerLeft().getId()  : null;
+        UUID rightId = user.getFixedPartnerRight() != null ? user.getFixedPartnerRight().getId() : null;
+
+        // Собираем всех 6 участников Stage 1 дерева
+        List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
+        tier1.sort(Comparator.comparingInt(TreePosition::getPosition));
+
+        List<greenecomall.dto.response.Stage2RaceResponse.RaceEntry> entries = new ArrayList<>();
+        int posNum = 2;
+
+        for (TreePosition t1 : tier1) {
+            if (t1.getIsAccelerator()) continue;
+            entries.add(toRaceEntry(t1.getUser(), posNum++, level, leftId, rightId));
+
+            List<TreePosition> tier2 = treePositionRepo.findByParentAndLevelAndStage(t1.getUser(), level, 1);
+            tier2.sort(Comparator.comparingInt(TreePosition::getPosition));
+            for (TreePosition t2 : tier2) {
+                if (!t2.getIsAccelerator()) {
+                    entries.add(toRaceEntry(t2.getUser(), posNum++, level, leftId, rightId));
+                }
+            }
+        }
+
+        // Сортируем: фикс. партнёры первыми, затем по убыванию прогресса
+        entries.sort(Comparator
+                .comparingInt((greenecomall.dto.response.Stage2RaceResponse.RaceEntry e) -> e.isFixedPartner() ? 0 : 1)
+                .thenComparingInt(e -> -e.filled()));
+
+        return greenecomall.dto.response.Stage2RaceResponse.builder()
+                .candidates(entries)
+                .stage2Completed(stage2Completed)
+                .build();
+    }
+
+    private greenecomall.dto.response.Stage2RaceResponse.RaceEntry toRaceEntry(
+            User member, int posNum, int level, UUID leftId, UUID rightId) {
+
+        int tier1Count = treePositionRepo.countByParentAndLevelAndStage(member, level, 1);
+        int tier2Count = treePositionRepo.findByParentAndLevelAndStage(member, level, 1).stream()
+                .mapToInt(c -> treePositionRepo.countByParentAndLevelAndStage(c.getUser(), level, 1))
+                .sum();
+        int filled = Math.min(tier1Count + tier2Count, 6);
+
+        boolean isLeft  = leftId  != null && leftId.equals(member.getId());
+        boolean isRight = rightId != null && rightId.equals(member.getId());
+
+        return greenecomall.dto.response.Stage2RaceResponse.RaceEntry.builder()
+                .userId(member.getId())
+                .name(member.getFirstName() + " " + member.getLastName())
+                .initials(initials(member))
+                .treePosition(posNum)
+                .filled(filled)
+                .total(6)
+                .currentStage(member.getCurrentStage())
+                .isFixedPartner(isLeft || isRight)
+                .fixedPartnerSlot(isLeft ? 1 : isRight ? 2 : 0)
                 .build();
     }
 
