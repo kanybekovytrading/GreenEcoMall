@@ -2,6 +2,7 @@ package greenecomall.config;
 
 import greenecomall.entity.User;
 import greenecomall.enums.AccountStatus;
+import greenecomall.enums.RegistrationPlan;
 import greenecomall.enums.Role;
 import greenecomall.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -48,6 +49,7 @@ public class DataInitializer implements ApplicationRunner {
                 .accountStatus(AccountStatus.ACTIVE)
                 .currentLevel(1)
                 .currentStage(1)
+                .registrationPlan(RegistrationPlan.STANDARD)
                 .build();
 
         userRepository.save(admin);

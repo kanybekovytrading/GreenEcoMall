@@ -58,7 +58,9 @@ public class User {
     private Role role;
 
     @Enumerated(EnumType.STRING)
-    private RegistrationPlan registrationPlan;
+    @Column(nullable = false)
+    @Builder.Default
+    private RegistrationPlan registrationPlan = RegistrationPlan.STANDARD;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
