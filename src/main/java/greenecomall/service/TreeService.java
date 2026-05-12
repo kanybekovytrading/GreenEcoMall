@@ -372,6 +372,39 @@ public class TreeService {
     }
 
     /**
+     * Checks all Stage-1 users whose matrix is already full (6 positions = tier1+tier2 >= 6)
+     * but who never received the onStage1Completed trigger (e.g. last slot was an accelerator).
+     */
+    @Transactional
+    public List<String> repairMissingStage1Completions() {
+        List<String> report = new ArrayList<>();
+
+        List<User> candidates = userRepository.findAll().stream()
+                .filter(u -> u.getAccountStatus() == greenecomall.enums.AccountStatus.ACTIVE)
+                .filter(u -> u.getCurrentStage() == 1)
+                .toList();
+
+        for (User user : candidates) {
+            int level = user.getCurrentLevel();
+            int tier1 = treePositionRepo.countByParentAndLevelAndStage(user, level, 1);
+            if (tier1 < 2) continue;
+
+            int tier2 = treePositionRepo.findByParentAndLevelAndStage(user, level, 1).stream()
+                    .mapToInt(c -> treePositionRepo.countByParentAndLevelAndStage(c.getUser(), level, 1))
+                    .sum();
+
+            if (tier1 + tier2 >= 6) {
+                report.add("COMPLETING: " + user.getFirstName() + " " + user.getLastName()
+                        + " (id=" + user.getId() + ", tier1=" + tier1 + ", tier2=" + tier2 + ")");
+                onStage1Completed(user, level);
+            }
+        }
+
+        if (report.isEmpty()) report.add("No missing Stage 1 completions found");
+        return report;
+    }
+
+    /**
      * Finds all active users who have an inviter but no TreePosition at the inviter's current level,
      * and places them in the tree using BFS. Returns a report of what was fixed.
      */
@@ -768,6 +801,8 @@ public class TreeService {
                         .isAccelerator(true)
                         .stageStatus(StageStatus.IN_PROGRESS)
                         .build());
+                // Accelerator fills a real slot — check if parent or grandparent completed Stage 1
+                checkStage1UpTheChain(current, level);
                 return;
             }
 
