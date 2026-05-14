@@ -1373,27 +1373,25 @@ public class TreeService {
                 ? userRepository.findById(user.getFixedPartnerRight().getId()).orElse(null) : null;
 
         List<TreeNodeResponse> children = new ArrayList<>();
-        if (left != null) {
+        if (left != null && left.getCurrentStage() >= stage) {
             children.add(TreeNodeResponse.builder()
                     .userId(left.getId())
                     .name(left.getFirstName() + " " + left.getLastName())
                     .initials(initials(left))
                     .position(1)
                     .isAccelerator(false)
-                    .stageStatus(left.getCurrentStage() > stage ? StageStatus.COMPLETED
-                            : left.getCurrentStage() == stage ? StageStatus.IN_PROGRESS : StageStatus.WAITING)
+                    .stageStatus(left.getCurrentStage() > stage ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
                     .children(buildFixedPartnersTree(left, level, stage).root().children())
                     .build());
         }
-        if (right != null) {
+        if (right != null && right.getCurrentStage() >= stage) {
             children.add(TreeNodeResponse.builder()
                     .userId(right.getId())
                     .name(right.getFirstName() + " " + right.getLastName())
                     .initials(initials(right))
                     .position(2)
                     .isAccelerator(false)
-                    .stageStatus(right.getCurrentStage() > stage ? StageStatus.COMPLETED
-                            : right.getCurrentStage() == stage ? StageStatus.IN_PROGRESS : StageStatus.WAITING)
+                    .stageStatus(right.getCurrentStage() > stage ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
                     .children(buildFixedPartnersTree(right, level, stage).root().children())
                     .build());
         }
