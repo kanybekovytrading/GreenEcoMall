@@ -329,6 +329,59 @@ public class AdminController {
 
     public record TestUserEntry(String firstName, String lastName, String inviterCode) {}
 
+    @Operation(
+            summary = "Создать тестовых пользователей Уровня 0 (Fast Start)",
+            description = """
+                    Создаёт и сразу активирует Fast Start пользователей (уровень 0) без OTP и без оплаты.
+                    Телефон и паспорт генерируются автоматически.
+                    Пользователи попадают в очередь Быстрого Старта и автоматически спариваются.
+
+                    Пример тела запроса:
+                    ```json
+                    [
+                      {"firstName": "Тест", "lastName": "Один",  "inviterCode": "AZAMAT123"},
+                      {"firstName": "Тест", "lastName": "Два",   "inviterCode": "AZAMAT123"},
+                      {"firstName": "Тест", "lastName": "Три",   "inviterCode": "AZAMAT123"}
+                    ]
+                    ```
+                    Ответ: имя, userId, phone, referralCode для каждого созданного пользователя.
+                    """)
+    @PostMapping("/test/create-fast-start-users")
+    public ResponseEntity<ApiResponse<List<Map<String, String>>>> createFastStartTestUsers(
+            @RequestBody List<TestUserEntry> entries) {
+
+        List<Map<String, String>> results = new ArrayList<>();
+        long base = System.currentTimeMillis() % 10_000_000L;
+
+        for (int i = 0; i < entries.size(); i++) {
+            TestUserEntry e = entries.get(i);
+            String phone = "+99671" + String.format("%07d", base + i);
+
+            greenecomall.dto.request.RegisterRequest req = new greenecomall.dto.request.RegisterRequest(
+                    e.firstName(), e.lastName(),
+                    phone,
+                    "FST" + (base + i),
+                    "test123456",
+                    e.inviterCode(),
+                    greenecomall.enums.RegistrationPlan.FAST_START,
+                    "testword"
+            );
+
+            greenecomall.dto.response.RegisterResponse reg = authService.registerByAdmin(req);
+            paymentService.activateUserById(reg.userId());
+
+            greenecomall.entity.User created = userRepository.findById(reg.userId()).orElseThrow();
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("name", e.firstName() + " " + e.lastName());
+            row.put("userId", reg.userId().toString());
+            row.put("phone", phone);
+            row.put("referralCode", created.getReferralCode());
+            results.add(row);
+        }
+
+        return ResponseEntity.ok(ApiResponse.ok(results));
+    }
+
     // ── Новости ──────────────────────────────────────────────────────────────
 
     @Operation(summary = "Статистика новостей — 4 карточки")
