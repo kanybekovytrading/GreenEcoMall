@@ -1268,8 +1268,9 @@ public class TreeService {
     }
 
     /**
-     * Stage 3 tree: те же 6 человек из Stage 2 (2 фикс. партнёра + их 4 партнёра).
-     * Прогресс = сколько из 6 достигли currentStage >= 3.
+     * Stage 3 tree: та же структура что и Stage 1 (tree_positions stage=1),
+     * но статусы узлов определяются по currentStage >= 3.
+     * Глубина — как у Stage 1 Level 1 (BFS без лимита).
      */
     private TreeResponse buildStage3Tree(User user, int level) {
         boolean userReachedStage3 = user.getCurrentLevel() > level
@@ -1289,76 +1290,60 @@ public class TreeService {
             return TreeResponse.builder()
                     .root(rootNode)
                     .stageStatus(StageStatus.WAITING)
-                    .progress(TreeResponse.TreeProgress.builder().filled(0).total(6).build())
+                    .progress(TreeResponse.TreeProgress.builder().filled(0).total(0).build())
                     .accelerator(TreeResponse.AcceleratorInfo.builder().active(false).build())
                     .build();
         }
 
-        // Tier 1: fixedPartnerLeft / fixedPartnerRight пользователя
-        User left1  = user.getFixedPartnerLeft()  != null
-                ? userRepository.findById(user.getFixedPartnerLeft().getId()).orElse(null)  : null;
-        User right1 = user.getFixedPartnerRight() != null
-                ? userRepository.findById(user.getFixedPartnerRight().getId()).orElse(null) : null;
-
-        int[] reached = {0};
-        List<TreeNodeResponse> rootChildren = new ArrayList<>();
-
-        if (left1  != null && left1.getCurrentStage()  >= 3) rootChildren.add(buildStage3Node(left1,  1, reached));
-        if (right1 != null && right1.getCurrentStage() >= 3) rootChildren.add(buildStage3Node(right1, 2, reached));
-
-        TreeNodeResponse rootNode = TreeNodeResponse.builder()
-                .userId(user.getId())
-                .name(user.getFirstName() + " " + user.getLastName())
-                .initials(initials(user))
-                .stageStatus(rootStatus)
-                .children(rootChildren)
-                .build();
+        int[] counts = {0, 0}; // [filled, total]
+        TreeNodeResponse rootNode = buildStage3DeepNode(user, level, 20, counts);
 
         return TreeResponse.builder()
                 .root(rootNode)
                 .stageStatus(rootStatus)
-                .progress(TreeResponse.TreeProgress.builder().filled(reached[0]).total(6).build())
+                .progress(TreeResponse.TreeProgress.builder().filled(counts[0]).total(counts[1]).build())
                 .accelerator(TreeResponse.AcceleratorInfo.builder().active(false).build())
                 .build();
     }
 
-    /** Строит узел Stage-3 дерева: сам участник + его партнёры tier-2 если они дошли до Stage 3. */
-    private TreeNodeResponse buildStage3Node(User member, int position, int[] reached) {
-        reached[0]++; // этот участник уже прошёл проверку >= 3 перед вызовом
-        boolean completed = member.getCurrentStage() > 3; // завершил Stage 3 = перешёл на Stage 4+
+    private TreeNodeResponse buildStage3DeepNode(User user, int level, int depth, int[] counts) {
+        List<TreeNodeResponse> childNodes = new ArrayList<>();
 
-        User subLeft  = member.getFixedPartnerLeft()  != null
-                ? userRepository.findById(member.getFixedPartnerLeft().getId()).orElse(null)  : null;
-        User subRight = member.getFixedPartnerRight() != null
-                ? userRepository.findById(member.getFixedPartnerRight().getId()).orElse(null) : null;
+        if (depth > 0) {
+            List<TreePosition> children = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
+            children.stream()
+                    .sorted(Comparator.comparingInt(TreePosition::getPosition))
+                    .forEach(child -> {
+                        boolean accel = child.getIsAccelerator();
+                        if (!accel) {
+                            counts[1]++;
+                            if (child.getUser().getCurrentStage() >= 3) counts[0]++;
+                        }
+                        StageStatus childStatus = accel ? StageStatus.WAITING
+                                : child.getUser().getCurrentStage() > 3 ? StageStatus.COMPLETED
+                                : child.getUser().getCurrentStage() >= 3 ? StageStatus.IN_PROGRESS
+                                : StageStatus.WAITING;
+                        childNodes.add(TreeNodeResponse.builder()
+                                .userId(accel ? null : child.getUser().getId())
+                                .name(accel ? null : child.getUser().getFirstName() + " " + child.getUser().getLastName())
+                                .initials(accel ? null : initials(child.getUser()))
+                                .position(child.getPosition())
+                                .isAccelerator(accel)
+                                .stageStatus(childStatus)
+                                .children(accel ? List.of() : buildStage3DeepNode(child.getUser(), level, depth - 1, counts).children())
+                                .build());
+                    });
+        }
 
-        List<TreeNodeResponse> children = new ArrayList<>();
-        // Показываем sub-партнёра только если он тоже дошёл до Stage 3
-        if (subLeft  != null && subLeft.getCurrentStage()  >= 3) children.add(buildStage3LeafNode(subLeft,  1, reached));
-        if (subRight != null && subRight.getCurrentStage() >= 3) children.add(buildStage3LeafNode(subRight, 2, reached));
+        StageStatus userStatus = user.getCurrentStage() > 3 ? StageStatus.COMPLETED
+                : user.getCurrentStage() >= 3 ? StageStatus.IN_PROGRESS : StageStatus.WAITING;
 
         return TreeNodeResponse.builder()
-                .userId(member.getId())
-                .name(member.getFirstName() + " " + member.getLastName())
-                .initials(initials(member))
-                .position(position)
-                .isAccelerator(false)
-                .stageStatus(completed ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
-                .children(children)
-                .build();
-    }
-
-    private TreeNodeResponse buildStage3LeafNode(User member, int position, int[] reached) {
-        reached[0]++;
-        boolean completed = member.getCurrentStage() > 3;
-        return TreeNodeResponse.builder()
-                .userId(member.getId())
-                .name(member.getFirstName() + " " + member.getLastName())
-                .initials(initials(member))
-                .position(position)
-                .isAccelerator(false)
-                .stageStatus(completed ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
-                .children(List.of())
+                .userId(user.getId())
+                .name(user.getFirstName() + " " + user.getLastName())
+                .initials(initials(user))
+                .stageStatus(userStatus)
+                .children(childNodes)
                 .build();
     }
 
