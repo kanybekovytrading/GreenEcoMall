@@ -129,9 +129,16 @@ public class TreeService {
                 "Аккаунт активирован",
                 "Вы размещены в Быстром Старте. Теперь ждите своего участника.");
 
-        // Find eligible Stage 2 slot: earliest activated, left before right,
-        // no node may have both slots occupied by Level 0 graduates.
-        List<User> stage2Candidates = userRepository.findStage2UsersWithEmptySlots();
+        // Find eligible Stage 2 slot: weakest link (1 partner) first, then 0 partners;
+        // within each group by activatedAt ASC (left-to-right approximation).
+        // No node may have both slots occupied by Level 0 graduates.
+        List<User> stage2Candidates = userRepository.findStage2UsersWithEmptySlots().stream()
+                .sorted(Comparator.comparingInt((User u) -> {
+                    int p = (u.getFixedPartnerLeft() != null ? 1 : 0)
+                          + (u.getFixedPartnerRight() != null ? 1 : 0);
+                    return p == 1 ? 0 : 1;
+                }))
+                .collect(java.util.stream.Collectors.toList());
         for (User candidate : stage2Candidates) {
             User host = userRepository.findByIdForUpdate(candidate.getId()).orElse(candidate);
 
@@ -329,6 +336,54 @@ public class TreeService {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
+     * Manually moves a Stage 2 user from their current host to a new target host.
+     * Removes them from the old host's left/right slot, places them in the target's empty slot.
+     * Triggers onStage2Completed if the target's slots become full after placement.
+     */
+    @Transactional
+    public String moveStage2Partner(User userToMove, User newHost) {
+        int level = userToMove.getCurrentLevel();
+
+        // Remove from current host (if any)
+        Optional<User> currentHostOpt = userRepository.findStage2HostOf(userToMove);
+        if (currentHostOpt.isPresent()) {
+            User oldHost = userRepository.findByIdForUpdate(currentHostOpt.get().getId())
+                    .orElse(currentHostOpt.get());
+            if (userToMove.equals(oldHost.getFixedPartnerLeft())) {
+                oldHost.setFixedPartnerLeft(null);
+            } else if (userToMove.equals(oldHost.getFixedPartnerRight())) {
+                oldHost.setFixedPartnerRight(null);
+            }
+            userRepository.save(oldHost);
+        }
+
+        // Place under new host
+        User lockedHost = userRepository.findByIdForUpdate(newHost.getId())
+                .orElseThrow(() -> new IllegalStateException("New host not found: " + newHost.getId()));
+
+        String slot;
+        if (lockedHost.getFixedPartnerLeft() == null) {
+            lockedHost.setFixedPartnerLeft(userToMove);
+            slot = "LEFT";
+        } else if (lockedHost.getFixedPartnerRight() == null) {
+            lockedHost.setFixedPartnerRight(userToMove);
+            slot = "RIGHT";
+        } else {
+            throw new IllegalStateException("New host " + newHost.getId() + " already has both Stage 2 partners");
+        }
+        userRepository.save(lockedHost);
+
+        if (lockedHost.getFixedPartnerLeft() != null && lockedHost.getFixedPartnerRight() != null) {
+            onStage2Completed(lockedHost, level);
+        }
+
+        String from = currentHostOpt.map(h -> h.getFirstName() + " " + h.getLastName()).orElse("нет (не был размещён)");
+        return "MOVED: " + userToMove.getFirstName() + " " + userToMove.getLastName()
+                + " | FROM: " + from
+                + " | TO: " + lockedHost.getFirstName() + " " + lockedHost.getLastName() + " (" + slot + ")";
+    }
+
+    /**
      * For all active users who completed Stage 1 (currentStage >= 2) but are not yet placed
      * as anyone's fixedPartnerLeft/Right, re-runs fillStage2UnderInviter.
      */
@@ -407,6 +462,33 @@ public class TreeService {
         }
 
         if (report.isEmpty()) report.add("No missing Stage 1 completions found");
+        return report;
+    }
+
+    /**
+     * Finds all active users stuck on Stage 3 whose entire 6-person Stage-1 team has already
+     * reached Stage 3, and triggers onStage3Completed for them.
+     * Fixes the edge case where the root reached Stage 3 last (checkStage3Progress returned early).
+     */
+    @Transactional
+    public List<String> repairStage3Completions() {
+        List<String> report = new ArrayList<>();
+
+        List<User> candidates = userRepository.findAll().stream()
+                .filter(u -> u.getAccountStatus() == greenecomall.enums.AccountStatus.ACTIVE)
+                .filter(u -> u.getCurrentStage() == 3)
+                .toList();
+
+        for (User user : candidates) {
+            int level = user.getCurrentLevel();
+            if (allStage2FixedPartnersAtStage(user, 3)) {
+                report.add("COMPLETING Stage 3: " + user.getFirstName() + " " + user.getLastName()
+                        + " (id=" + user.getId() + ")");
+                onStage3Completed(user, level);
+            }
+        }
+
+        if (report.isEmpty()) report.add("No missing Stage 3 completions found");
         return report;
     }
 
@@ -533,10 +615,10 @@ public class TreeService {
      */
     private void checkStage3Progress(User user, int level) {
         User treeRoot = findStage1TreeRoot(user, level);
-        if (treeRoot == null) return;
+        if (treeRoot == null) treeRoot = user; // user is the root of their own Stage-1 tree
         if (treeRoot.getCurrentStage() != 3) return; // root hasn't reached stage 3 yet itself
 
-        boolean allAtStage3 = allSixMembersAtStage(treeRoot, level, 3);
+        boolean allAtStage3 = allStage2FixedPartnersAtStage(treeRoot, 3);
         if (allAtStage3) {
             onStage3Completed(treeRoot, level);
         }
@@ -547,28 +629,21 @@ public class TreeService {
      * and both partners are now on Stage 4 — which triggers Stage 4 completion for the inviter.
      */
     private void checkStage4Progress(User user, int level) {
-        // Reload user to get fresh data
-        User fresh = userRepository.findById(user.getId()).orElse(user);
-        User inviter = fresh.getInviter();
-        if (inviter == null) return;
+        User host = userRepository.findStage2HostOf(user).orElse(null);
+        if (host == null) return;
 
-        inviter = userRepository.findById(inviter.getId()).orElse(inviter);
-        if (inviter.getCurrentStage() != 4) return;
+        host = userRepository.findById(host.getId()).orElse(host);
+        if (host.getCurrentStage() != 4) return;
 
-        boolean isLeftPartner  = inviter.getFixedPartnerLeft()  != null
-                && inviter.getFixedPartnerLeft().getId().equals(user.getId());
-        boolean isRightPartner = inviter.getFixedPartnerRight() != null
-                && inviter.getFixedPartnerRight().getId().equals(user.getId());
-
-        if (!isLeftPartner && !isRightPartner) return;
-
-        boolean leftDone  = inviter.getFixedPartnerLeft()  != null
-                && inviter.getFixedPartnerLeft().getCurrentStage()  >= 4;
-        boolean rightDone = inviter.getFixedPartnerRight() != null
-                && inviter.getFixedPartnerRight().getCurrentStage() >= 4;
+        boolean leftDone  = host.getFixedPartnerLeft()  != null
+                && userRepository.findById(host.getFixedPartnerLeft().getId())
+                        .map(u -> u.getCurrentStage() >= 4).orElse(false);
+        boolean rightDone = host.getFixedPartnerRight() != null
+                && userRepository.findById(host.getFixedPartnerRight().getId())
+                        .map(u -> u.getCurrentStage() >= 4).orElse(false);
 
         if (leftDone && rightDone) {
-            onStage4Completed(inviter, level);
+            onStage4Completed(host, level);
         }
     }
 
@@ -588,34 +663,75 @@ public class TreeService {
         User ancestor = findFirstStage2Ancestor(user, level);
 
         if (ancestor == null) {
-            // Fallback: place under earliest Fast Start graduate on Stage 2
             placeUnderFastStartGraduate(user, level);
             return;
         }
 
-        User locked = userRepository.findByIdForUpdate(ancestor.getId())
-                .orElseThrow(() -> new IllegalStateException("Stage2 ancestor not found: " + ancestor.getId()));
+        // BFS the Stage 2 team to find the weakest link:
+        // priority 1 — has exactly 1 partner (needs just 1 more); priority 2 — has 0 partners.
+        // Within each priority, BFS left-to-right order is preserved naturally.
+        User target = findWeakestStage2Target(ancestor, level);
+        if (target == null) {
+            placeUnderFastStartGraduate(user, level);
+            return;
+        }
+
+        User locked = userRepository.findByIdForUpdate(target.getId())
+                .orElseThrow(() -> new IllegalStateException("Stage2 target not found: " + target.getId()));
 
         if (locked.getCurrentStage() != 2 || locked.getCurrentLevel() != level) return;
 
         if (locked.getFixedPartnerLeft() == null) {
             locked.setFixedPartnerLeft(user);
             userRepository.save(locked);
-
             notificationService.send(locked, NotificationType.NEW_MEMBER,
                     "Этап 2 — левая позиция занята",
                     user.getFirstName() + " " + user.getLastName() + " встал на Этап 2 (слева)");
-
         } else if (locked.getFixedPartnerRight() == null) {
             locked.setFixedPartnerRight(user);
             userRepository.save(locked);
-
             notificationService.send(locked, NotificationType.NEW_MEMBER,
                     "Этап 2 — правая позиция занята",
                     user.getFirstName() + " " + user.getLastName() + " встал на Этап 2 (справа)");
-
             onStage2Completed(locked, level);
         }
+    }
+
+    /**
+     * BFS through the Stage 2 team rooted at `root` (via fixedPartnerLeft/Right links).
+     * Returns the weakest candidate: has exactly 1 partner first (needs 1 more to complete),
+     * then 0 partners. Within each priority group, BFS left-to-right order is preserved.
+     */
+    private User findWeakestStage2Target(User root, int level) {
+        Queue<User> queue = new ArrayDeque<>();
+        Set<UUID> visited = new HashSet<>();
+        queue.add(root);
+
+        List<User> onePartner  = new ArrayList<>();
+        List<User> zeroPartner = new ArrayList<>();
+
+        while (!queue.isEmpty()) {
+            User cur = queue.poll();
+            if (!visited.add(cur.getId())) continue;
+
+            User fresh = userRepository.findById(cur.getId()).orElse(null);
+            if (fresh == null) continue;
+
+            if (fresh.getCurrentLevel() == level && fresh.getCurrentStage() == 2) {
+                int partners = (fresh.getFixedPartnerLeft()  != null ? 1 : 0)
+                             + (fresh.getFixedPartnerRight() != null ? 1 : 0);
+                if      (partners == 1) onePartner.add(fresh);
+                else if (partners == 0) zeroPartner.add(fresh);
+            }
+
+            // Traverse deeper: left first (BFS left-to-right)
+            if (fresh.getFixedPartnerLeft()  != null) queue.add(fresh.getFixedPartnerLeft());
+            if (fresh.getFixedPartnerRight() != null) queue.add(fresh.getFixedPartnerRight());
+        }
+
+        if (!onePartner.isEmpty())  return onePartner.get(0);
+        if (!zeroPartner.isEmpty()) return zeroPartner.get(0);
+        return null;
     }
 
     /**
@@ -624,7 +740,13 @@ public class TreeService {
      * and still has an empty fixed partner slot (left before right).
      */
     private void placeUnderFastStartGraduate(User user, int level) {
-        List<User> candidates = userRepository.findFastStartStage2WithEmptySlots();
+        List<User> candidates = userRepository.findFastStartStage2WithEmptySlots().stream()
+                .sorted(Comparator.comparingInt((User u) -> {
+                    int p = (u.getFixedPartnerLeft() != null ? 1 : 0)
+                          + (u.getFixedPartnerRight() != null ? 1 : 0);
+                    return p == 1 ? 0 : 1;
+                }))
+                .collect(java.util.stream.Collectors.toList());
 
         for (User candidate : candidates) {
             User locked = userRepository.findByIdForUpdate(candidate.getId()).orElse(null);
@@ -1060,6 +1182,27 @@ public class TreeService {
     /**
      * Returns true if all 6 members in root's Stage-1 tree have currentStage >= minStage.
      */
+    /**
+     * Returns true if all 6 members of root's Stage-2 fixed-partner tree have currentStage >= minStage.
+     * Tree = root.fixedPartnerLeft/Right (tier-1) + their fixedPartnerLeft/Right (tier-2).
+     */
+    private boolean allStage2FixedPartnersAtStage(User root, int minStage) {
+        User left1  = root.getFixedPartnerLeft()  != null
+                ? userRepository.findById(root.getFixedPartnerLeft().getId()).orElse(null)  : null;
+        User right1 = root.getFixedPartnerRight() != null
+                ? userRepository.findById(root.getFixedPartnerRight().getId()).orElse(null) : null;
+        if (left1 == null || right1 == null) return false;
+        if (left1.getCurrentStage() < minStage || right1.getCurrentStage() < minStage) return false;
+
+        User ll = left1.getFixedPartnerLeft()  != null ? userRepository.findById(left1.getFixedPartnerLeft().getId()).orElse(null)  : null;
+        User lr = left1.getFixedPartnerRight() != null ? userRepository.findById(left1.getFixedPartnerRight().getId()).orElse(null) : null;
+        User rl = right1.getFixedPartnerLeft() != null ? userRepository.findById(right1.getFixedPartnerLeft().getId()).orElse(null)  : null;
+        User rr = right1.getFixedPartnerRight() != null ? userRepository.findById(right1.getFixedPartnerRight().getId()).orElse(null) : null;
+        if (ll == null || lr == null || rl == null || rr == null) return false;
+        return ll.getCurrentStage() >= minStage && lr.getCurrentStage() >= minStage
+                && rl.getCurrentStage() >= minStage && rr.getCurrentStage() >= minStage;
+    }
+
     private boolean allSixMembersAtStage(User root, int level, int minStage) {
         List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(root, level, 1);
         if (tier1.size() < 2) return false;

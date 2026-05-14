@@ -38,6 +38,9 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     boolean existsByFixedPartnerLeft(User user);
     boolean existsByFixedPartnerRight(User user);
 
+    @Query("SELECT u FROM User u WHERE u.fixedPartnerLeft = :partner OR u.fixedPartnerRight = :partner")
+    Optional<User> findStage2HostOf(@Param("partner") User partner);
+
     // Level 0 (Fast Start) users waiting for their 1 person
     @Query("SELECT u FROM User u WHERE u.registrationPlan = 'FAST_START' AND u.currentLevel = 0 AND u.currentStage = 1 AND u.accountStatus = 'ACTIVE' ORDER BY u.activatedAt ASC")
     List<User> findWaitingLevel0Users();

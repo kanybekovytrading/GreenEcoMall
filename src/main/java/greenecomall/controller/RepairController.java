@@ -40,4 +40,16 @@ public class RepairController {
     public ResponseEntity<ApiResponse<List<String>>> repairTreePositions() {
         return ResponseEntity.ok(ApiResponse.ok(treeService.repairMissingPositions()));
     }
+
+    @Operation(summary = "Завершить зависший Этап 3",
+            description = """
+                    Находит всех на currentStage=3 у кого вся команда из 6 человек уже на Stage 3,
+                    и принудительно переводит их на Stage 4.
+                    Используй если корень дерева достиг Stage 3 последним и автопереход не сработал.
+                    """)
+    @SecurityRequirements
+    @PostMapping("/stage3-completions")
+    public ResponseEntity<ApiResponse<List<String>>> repairStage3Completions() {
+        return ResponseEntity.ok(ApiResponse.ok(treeService.repairStage3Completions()));
+    }
 }
