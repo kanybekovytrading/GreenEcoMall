@@ -824,16 +824,15 @@ public class TreeService {
      * Within the same BFS level, prefer nodes with 1 partner (need just 1 more).
      */
     private void placeUnderFastStartGraduate(User user, int level) {
-        // BFS-ordered list of ALL Stage-2 users with free slots
+        // BFS top-to-bottom, left-to-right across ALL Stage-2 users with free slots.
+        // Within the same BFS depth, prefer nodes that already have 1 partner (need just 1 more).
         List<User> bfsOrdered = getStage2CandidatesInBfsOrder(level);
 
-        // Filter to Fast Start graduates only, then stable-sort: 1-partner first
         List<User> candidates = bfsOrdered.stream()
-                .filter(u -> u.getRegistrationPlan() == RegistrationPlan.FAST_START)
                 .sorted(Comparator.comparingInt((User u) -> {
                     int p = (u.getFixedPartnerLeft() != null ? 1 : 0)
                           + (u.getFixedPartnerRight() != null ? 1 : 0);
-                    return p == 1 ? 0 : 1; // 1-partner hosts first (just need 1 more)
+                    return p == 1 ? 0 : 1;
                 }))
                 .collect(java.util.stream.Collectors.toList());
 
@@ -847,7 +846,7 @@ public class TreeService {
                 notificationService.send(locked, NotificationType.NEW_MEMBER,
                         "Этап 2 — левая позиция занята",
                         user.getFirstName() + " " + user.getLastName() + " встал на Этап 2 (слева)");
-                log.info("Fallback Stage2: {} placed as LEFT partner of FastStart graduate {}",
+                log.info("Fallback Stage2: {} placed as LEFT partner of {}",
                         user.getId(), locked.getId());
                 return;
             } else if (locked.getFixedPartnerRight() == null) {
@@ -857,13 +856,13 @@ public class TreeService {
                         "Этап 2 — правая позиция занята",
                         user.getFirstName() + " " + user.getLastName() + " встал на Этап 2 (справа)");
                 onStage2Completed(locked, level);
-                log.info("Fallback Stage2: {} placed as RIGHT partner of FastStart graduate {}",
+                log.info("Fallback Stage2: {} placed as RIGHT partner of {}",
                         user.getId(), locked.getId());
                 return;
             }
         }
 
-        log.warn("Stage2 fallback: no Fast Start graduate with empty slot found for user {}", user.getId());
+        log.warn("Stage2 fallback: no Stage-2 user with empty slot found for user {}", user.getId());
     }
 
     /**

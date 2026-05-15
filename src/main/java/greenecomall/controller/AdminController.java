@@ -289,6 +289,24 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok(report));
     }
 
+    @Operation(summary = "Принудительно завершить Stage 2 для пользователя",
+            description = "Вызывает onStage2Completed если оба fixed-partner слота уже заполнены, но стейдж не обновился. Тело: { \"userId\": \"uuid\" }")
+    @PostMapping("/repair/trigger-stage2-complete")
+    public ResponseEntity<ApiResponse<String>> triggerStage2Complete(@RequestBody Map<String, UUID> body) {
+        UUID userId = body.get("userId");
+        if (userId == null) throw BusinessException.of(ErrorCode.USER_NOT_FOUND);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> BusinessException.of(ErrorCode.USER_NOT_FOUND));
+        if (user.getFixedPartnerLeft() == null || user.getFixedPartnerRight() == null) {
+            return ResponseEntity.ok(ApiResponse.ok("SKIPPED: не оба слота заполнены"));
+        }
+        if (user.getCurrentStage() != 2) {
+            return ResponseEntity.ok(ApiResponse.ok("SKIPPED: пользователь не на Stage 2 (текущий: " + user.getCurrentStage() + ")"));
+        }
+        treeService.onStage2Completed(user, user.getCurrentLevel());
+        return ResponseEntity.ok(ApiResponse.ok("OK: " + user.getFirstName() + " " + user.getLastName() + " переведён на Stage 3"));
+    }
+
     @Operation(summary = "Переместить Stage-2 участника под нового хоста",
             description = """
                     Снимает пользователя с текущего хоста (если есть) и ставит под нового.

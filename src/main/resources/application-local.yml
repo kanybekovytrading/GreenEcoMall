@@ -2,9 +2,9 @@ spring:
   application:
     name: GreenEcoMall
   datasource:
-    url: jdbc:postgresql://trolley.proxy.rlwy.net:13171/railway
+    url: jdbc:postgresql://mainline.proxy.rlwy.net:24183/railway
     username: postgres
-    password: jFmtOmZaGdxwbeHXzAbZeNbqsljtZIJf
+    password: mLURIDZFPcYHEOXSnMjgmKwaFHHsVhlX
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
