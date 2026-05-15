@@ -678,6 +678,9 @@ public class TreeService {
         User fresh = userRepository.findById(root.getId()).orElse(root);
         if (fresh.getCurrentLevel() != level || fresh.getCurrentStage() != 1) return;
 
+        // Admin accounts are not MLM participants.
+        if (fresh.getRole() == greenecomall.enums.Role.ADMIN) return;
+
         // Level 0 (Fast Start) graduation is triggered directly in placeNewFastStartUser,
         // not through this general-purpose check.
         if (fresh.getRegistrationPlan() == RegistrationPlan.FAST_START) return;
@@ -774,6 +777,7 @@ public class TreeService {
      * places the user under the earliest Fast Start graduate currently waiting on Stage 2.
      */
     private void fillStage2UnderInviter(User user, int level) {
+        if (user.getRole() == greenecomall.enums.Role.ADMIN) return;
         User ancestor = findFirstStage2Ancestor(user, level);
 
         if (ancestor == null) {
