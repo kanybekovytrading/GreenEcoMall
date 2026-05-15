@@ -1200,6 +1200,8 @@ public class TreeService {
                     .sorted(Comparator.comparingInt(TreePosition::getPosition))
                     .forEach(c -> queue.add(c.getUser()));
         }
+        log.error("bfsPlaceAccelerator: no valid slot found for owner={} starting from branchRoot={} level={}",
+                owner.getId(), branchRoot.getId(), level);
     }
 
     /**
