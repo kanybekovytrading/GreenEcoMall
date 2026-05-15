@@ -501,6 +501,7 @@ public class TreeService {
             if (tier1 < 2) continue;
 
             int tier2 = treePositionRepo.findByParentAndLevelAndStage(user, level, 1).stream()
+                    .filter(c -> !c.getIsAccelerator())
                     .mapToInt(c -> treePositionRepo.countByParentAndLevelAndStage(c.getUser(), level, 1))
                     .sum();
 
@@ -650,7 +651,11 @@ public class TreeService {
         if (tier1 < 2) return;
 
         List<TreePosition> directChildren = treePositionRepo.findByParentAndLevelAndStage(fresh, level, 1);
+        // Only traverse REAL (non-accelerator) tier-1 nodes for tier-2 count.
+        // Accelerators store the Stage-3 graduate's user_id as their "user" — counting their children
+        // would pull in that graduate's own matrix and massively over-count.
         int tier2 = directChildren.stream()
+                .filter(c -> !c.getIsAccelerator())
                 .mapToInt(c -> treePositionRepo.countByParentAndLevelAndStage(c.getUser(), level, 1))
                 .sum();
 
@@ -660,17 +665,42 @@ public class TreeService {
     }
 
     /**
-     * After user advances to Stage 3, checks if the root of the tree user belongs to
-     * now has all 6 members on Stage 3 — which triggers Stage 3 completion for that root.
+     * After user advances to Stage 3, walks UP the Stage-1 tree checking every ancestor
+     * that is currently at Stage 3. If all 6 fixed-partner team members have reached Stage 3
+     * for that ancestor, calls onStage3Completed for them.
+     *
+     * The old approach only checked the topmost root (which may already be past Stage 3),
+     * missing intermediate ancestors like Ainazik when Azamat is already at Stage 4.
      */
     private void checkStage3Progress(User user, int level) {
-        User treeRoot = findStage1TreeRoot(user, level);
-        if (treeRoot == null) treeRoot = user; // user is the root of their own Stage-1 tree
-        if (treeRoot.getCurrentStage() != 3) return; // root hasn't reached stage 3 yet itself
+        Set<UUID> checked = new HashSet<>();
 
-        boolean allAtStage3 = allStage2FixedPartnersAtStage(treeRoot, 3);
-        if (allAtStage3) {
-            onStage3Completed(treeRoot, level);
+        // Walk up the Stage-1 parent chain
+        Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(user, level, 1);
+        User current = (pos.isPresent() && pos.get().getParent() != null)
+                ? pos.get().getParent() : null;
+
+        while (current != null && checked.add(current.getId())) {
+            User fresh = userRepository.findById(current.getId()).orElse(null);
+            if (fresh == null) break;
+
+            if (fresh.getCurrentLevel() == level && fresh.getCurrentStage() == 3
+                    && allStage2FixedPartnersAtStage(fresh, 3)) {
+                onStage3Completed(fresh, level);
+                // onStage3Completed may have advanced fresh to Stage 4; reload to avoid stale ref
+                fresh = userRepository.findById(fresh.getId()).orElse(fresh);
+            }
+
+            Optional<TreePosition> nextPos = treePositionRepo.findByUserAndLevelAndStage(fresh, level, 1);
+            if (nextPos.isEmpty() || nextPos.get().getParent() == null) break;
+            current = nextPos.get().getParent();
+        }
+
+        // Also check user itself (e.g. user is a root and just completed their own Stage 2)
+        User fresh = userRepository.findById(user.getId()).orElse(user);
+        if (fresh.getCurrentLevel() == level && fresh.getCurrentStage() == 3
+                && allStage2FixedPartnersAtStage(fresh, 3)) {
+            onStage3Completed(fresh, level);
         }
     }
 
@@ -786,15 +816,24 @@ public class TreeService {
 
     /**
      * Fallback placement: when a user completed Stage 1 but has no ancestor on Stage 2,
-     * place them under the earliest-activated Fast Start graduate who is on Stage 2
-     * and still has an empty fixed partner slot (left before right).
+     * place them under a Fast Start Stage-2 graduate with an empty slot.
+     *
+     * Uses BFS tree order (left-to-right, top-to-bottom) so that left-branch hosts
+     * (e.g. Рабия under Ainazik→Andrey) are always filled before right-branch hosts
+     * (e.g. Цукер under Ainazik→Erlan), regardless of activation timestamps.
+     * Within the same BFS level, prefer nodes with 1 partner (need just 1 more).
      */
     private void placeUnderFastStartGraduate(User user, int level) {
-        List<User> candidates = userRepository.findFastStartStage2WithEmptySlots().stream()
+        // BFS-ordered list of ALL Stage-2 users with free slots
+        List<User> bfsOrdered = getStage2CandidatesInBfsOrder(level);
+
+        // Filter to Fast Start graduates only, then stable-sort: 1-partner first
+        List<User> candidates = bfsOrdered.stream()
+                .filter(u -> u.getRegistrationPlan() == RegistrationPlan.FAST_START)
                 .sorted(Comparator.comparingInt((User u) -> {
                     int p = (u.getFixedPartnerLeft() != null ? 1 : 0)
                           + (u.getFixedPartnerRight() != null ? 1 : 0);
-                    return p == 1 ? 0 : 1;
+                    return p == 1 ? 0 : 1; // 1-partner hosts first (just need 1 more)
                 }))
                 .collect(java.util.stream.Collectors.toList());
 
