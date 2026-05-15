@@ -273,6 +273,44 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok(report));
     }
 
+    @Operation(summary = "Repair: разместить Stage-2 участников которые не были связаны в дереве",
+            description = "Находит активных участников на Stage 2+, которые не являются чьим-либо fixedPartnerLeft/Right, и повторно запускает размещение. Исправляет отвязанные поддеревья.")
+    @PostMapping("/repair/stage2-placements")
+    public ResponseEntity<ApiResponse<List<String>>> repairStage2Placements() {
+        List<String> report = treeService.repairStage2Placements();
+        return ResponseEntity.ok(ApiResponse.ok(report));
+    }
+
+    @Operation(summary = "Repair: завершить Stage 3 для участников у которых вся команда уже на Stage 3",
+            description = "Ищет участников на Stage 3, у которых оба fixedPartner уже >=Stage3, и вызывает onStage3Completed.")
+    @PostMapping("/repair/stage3-completions")
+    public ResponseEntity<ApiResponse<List<String>>> repairStage3Completions() {
+        List<String> report = treeService.repairStage3Completions();
+        return ResponseEntity.ok(ApiResponse.ok(report));
+    }
+
+    @Operation(summary = "Переместить Stage-2 участника под нового хоста",
+            description = """
+                    Снимает пользователя с текущего хоста (если есть) и ставит под нового.
+                    Если у нового хоста оба слота заполнятся — автоматически вызывается onStage2Completed.
+                    Тело: { "userToMoveId": "uuid", "newHostId": "uuid" }
+                    """)
+    @PostMapping("/repair/move-stage2-partner")
+    public ResponseEntity<ApiResponse<String>> moveStage2Partner(
+            @RequestBody Map<String, UUID> body) {
+        UUID userToMoveId = body.get("userToMoveId");
+        UUID newHostId    = body.get("newHostId");
+        if (userToMoveId == null || newHostId == null) {
+            throw BusinessException.of(ErrorCode.USER_NOT_FOUND);
+        }
+        User userToMove = userRepository.findById(userToMoveId)
+                .orElseThrow(() -> BusinessException.of(ErrorCode.USER_NOT_FOUND));
+        User newHost = userRepository.findById(newHostId)
+                .orElseThrow(() -> BusinessException.of(ErrorCode.USER_NOT_FOUND));
+        String result = treeService.moveStage2Partner(userToMove, newHost);
+        return ResponseEntity.ok(ApiResponse.ok(result));
+    }
+
     // ── Тестовые пользователи ────────────────────────────────────────────────
 
     @Operation(

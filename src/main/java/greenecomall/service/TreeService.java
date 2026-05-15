@@ -431,50 +431,54 @@ public class TreeService {
 
     /**
      * For all active users who completed Stage 1 (currentStage >= 2) but are not yet placed
-     * as anyone's fixedPartnerLeft/Right, re-runs fillStage2UnderInviter.
+     * as anyone's fixedPartnerLeft/Right, re-runs the full fillStage2UnderInviter logic
+     * (including the Fast Start fallback).
      */
     @Transactional
     public List<String> repairStage2Placements() {
         List<String> report = new ArrayList<>();
 
+        // Collect unplaced users sorted by activated_at so earlier graduates get priority
         List<User> candidates = userRepository.findAll().stream()
                 .filter(u -> u.getAccountStatus() == greenecomall.enums.AccountStatus.ACTIVE)
                 .filter(u -> u.getCurrentStage() >= 2)
                 .filter(u -> !userRepository.existsByFixedPartnerLeft(u)
                           && !userRepository.existsByFixedPartnerRight(u))
+                .sorted(Comparator.comparing(u -> u.getActivatedAt() != null
+                        ? u.getActivatedAt() : LocalDateTime.MAX))
                 .toList();
+
+        if (candidates.isEmpty()) {
+            report.add("Все позиции Stage 2 в порядке");
+            return report;
+        }
 
         for (User user : candidates) {
             int level = user.getCurrentLevel();
-            User ancestor = findFirstStage2Ancestor(user, level);
-            if (ancestor == null) {
-                report.add("NO_ANCESTOR: " + user.getFirstName() + " " + user.getLastName()
-                        + " (id=" + user.getId() + ") — нет предка на Stage 2");
+            // Snapshot whether this user is placed before the call
+            boolean wasPlacedBefore = userRepository.existsByFixedPartnerLeft(user)
+                    || userRepository.existsByFixedPartnerRight(user);
+            if (wasPlacedBefore) {
+                report.add("ALREADY_PLACED: " + user.getFirstName() + " " + user.getLastName());
                 continue;
             }
-            User locked = userRepository.findByIdForUpdate(ancestor.getId()).orElse(null);
-            if (locked == null || locked.getCurrentStage() != 2) {
-                report.add("SKIP: " + user.getFirstName() + " — предок уже прошёл Stage 2");
-                continue;
-            }
-            if (locked.getFixedPartnerLeft() == null) {
-                locked.setFixedPartnerLeft(user);
-                userRepository.save(locked);
-                report.add("PLACED_LEFT: " + user.getFirstName() + " " + user.getLastName()
-                        + " → " + locked.getFirstName() + " " + locked.getLastName());
-                if (locked.getFixedPartnerRight() != null) onStage2Completed(locked, level);
-            } else if (locked.getFixedPartnerRight() == null) {
-                locked.setFixedPartnerRight(user);
-                userRepository.save(locked);
-                report.add("PLACED_RIGHT: " + user.getFirstName() + " " + user.getLastName()
-                        + " → " + locked.getFirstName() + " " + locked.getLastName());
-                onStage2Completed(locked, level);
+
+            fillStage2UnderInviter(user, level);
+
+            // Check if placement happened
+            boolean placedNow = userRepository.existsByFixedPartnerLeft(user)
+                    || userRepository.existsByFixedPartnerRight(user);
+            if (placedNow) {
+                Optional<User> host = userRepository.findStage2HostOf(user);
+                String hostName = host.map(h -> h.getFirstName() + " " + h.getLastName()).orElse("?");
+                report.add("PLACED: " + user.getFirstName() + " " + user.getLastName()
+                        + " (id=" + user.getId() + ") → " + hostName);
             } else {
-                report.add("FULL: " + locked.getFirstName() + " уже заполнен, " + user.getFirstName() + " не размещён");
+                report.add("FAILED: " + user.getFirstName() + " " + user.getLastName()
+                        + " (id=" + user.getId() + ") — не удалось найти место");
             }
         }
 
-        if (report.isEmpty()) report.add("Все позиции Stage 2 в порядке");
         return report;
     }
 
