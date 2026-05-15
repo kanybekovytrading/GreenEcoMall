@@ -48,6 +48,10 @@ public class TreeService {
      */
     @Transactional
     public void placeNewUser(User inviter, User newUser) {
+        if (newUser.getRole() == greenecomall.enums.Role.ADMIN) {
+            log.info("Skipping MLM placement for ADMIN user {}", newUser.getId());
+            return;
+        }
         // Fast Start users (currentLevel=2) skip Level 1 and land in the Level 2 tree.
         // Normal users use the inviter's current level.
         int level = Math.max(inviter.getCurrentLevel(), newUser.getCurrentLevel());
@@ -180,7 +184,8 @@ public class TreeService {
         List<User> all = userRepository.findAll().stream()
                 .filter(u -> u.getCurrentLevel() == level
                           && u.getCurrentStage() >= 2
-                          && u.getAccountStatus() == greenecomall.enums.AccountStatus.ACTIVE)
+                          && u.getAccountStatus() == greenecomall.enums.AccountStatus.ACTIVE
+                          && u.getRole() != greenecomall.enums.Role.ADMIN)
                 .collect(java.util.stream.Collectors.toList());
 
         Map<UUID, User> byId = all.stream()
@@ -441,6 +446,7 @@ public class TreeService {
         // Collect unplaced users sorted by activated_at so earlier graduates get priority
         List<User> candidates = userRepository.findAll().stream()
                 .filter(u -> u.getAccountStatus() == greenecomall.enums.AccountStatus.ACTIVE)
+                .filter(u -> u.getRole() != greenecomall.enums.Role.ADMIN)
                 .filter(u -> u.getCurrentStage() >= 2)
                 .filter(u -> !userRepository.existsByFixedPartnerLeft(u)
                           && !userRepository.existsByFixedPartnerRight(u))
