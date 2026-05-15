@@ -594,19 +594,31 @@ public class TreeService {
             User current = queue.poll();
             List<TreePosition> children = treePositionRepo.findByParentAndLevelAndStage(current, level, stage);
 
-            boolean hasLeft  = children.stream().anyMatch(c -> c.getPosition() == 1);
-            boolean hasRight = children.stream().anyMatch(c -> c.getPosition() == 2);
+            Optional<TreePosition> leftChild  = children.stream().filter(c -> c.getPosition() == 1).findFirst();
+            Optional<TreePosition> rightChild = children.stream().filter(c -> c.getPosition() == 2).findFirst();
 
-            if (!hasLeft) {
+            // Empty left → place directly
+            if (leftChild.isEmpty()) {
                 savePosition(newUser, current, level, stage, 1);
                 return current;
             }
-            if (!hasRight) {
+            // Left is an accelerator → real person displaces it, accelerator shifts down
+            if (leftChild.get().getIsAccelerator()) {
+                displaceAccelerator(leftChild.get(), newUser, level, stage);
+                return current;
+            }
+            // Empty right → place directly
+            if (rightChild.isEmpty()) {
                 savePosition(newUser, current, level, stage, 2);
                 return current;
             }
+            // Right is an accelerator → displace
+            if (rightChild.get().getIsAccelerator()) {
+                displaceAccelerator(rightChild.get(), newUser, level, stage);
+                return current;
+            }
 
-            // Both slots taken — enqueue real children (accelerators excluded) left→right
+            // Both slots taken by real people — traverse them left→right
             children.stream()
                     .filter(c -> !c.getIsAccelerator())
                     .sorted(Comparator.comparingInt(TreePosition::getPosition))
@@ -615,6 +627,24 @@ public class TreeService {
 
         log.error("BFS: no free position found in tree of user {} level={} stage={}", root.getId(), level, stage);
         return null;
+    }
+
+    /**
+     * Replaces an accelerator slot with a real user.
+     * The accelerator's owner is re-placed at the next available BFS slot under the new real user.
+     */
+    private void displaceAccelerator(TreePosition accPos, User realUser, int level, int stage) {
+        User accOwner = accPos.getUser();
+        User parent   = accPos.getParent();
+        int  position = accPos.getPosition();
+
+        treePositionRepo.delete(accPos);
+        treePositionRepo.flush();
+
+        savePosition(realUser, parent, level, stage, position);
+
+        // Re-place the displaced accelerator starting from the new real user's subtree
+        bfsPlaceAccelerator(accOwner, realUser, level);
     }
 
     private void savePosition(User user, User parent, int level, int stage, int position) {
