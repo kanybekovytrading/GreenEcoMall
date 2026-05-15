@@ -705,10 +705,11 @@ public class TreeService {
     private void checkStage3Progress(User user, int level) {
         Set<UUID> checked = new HashSet<>();
 
-        // Walk up the Stage-1 parent chain
-        Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(user, level, 1);
-        User current = (pos.isPresent() && pos.get().getParent() != null)
-                ? pos.get().getParent() : null;
+        // Walk UP the Stage-2 fixed-partner host chain (not Stage-1 tree).
+        // Stage-3 completion is defined by the fixed-partner structure:
+        // Коля → host Sasha → host Aigul → ...
+        // The Stage-1 BFS tree is a different structure and must not be used here.
+        User current = userRepository.findStage2HostOf(user).orElse(null);
 
         while (current != null && checked.add(current.getId())) {
             User fresh = userRepository.findById(current.getId()).orElse(null);
@@ -717,16 +718,13 @@ public class TreeService {
             if (fresh.getCurrentLevel() == level && fresh.getCurrentStage() == 3
                     && allStage2FixedPartnersAtStage(fresh, 3)) {
                 onStage3Completed(fresh, level);
-                // onStage3Completed may have advanced fresh to Stage 4; reload to avoid stale ref
                 fresh = userRepository.findById(fresh.getId()).orElse(fresh);
             }
 
-            Optional<TreePosition> nextPos = treePositionRepo.findByUserAndLevelAndStage(fresh, level, 1);
-            if (nextPos.isEmpty() || nextPos.get().getParent() == null) break;
-            current = nextPos.get().getParent();
+            current = userRepository.findStage2HostOf(fresh).orElse(null);
         }
 
-        // Also check user itself (e.g. user is a root and just completed their own Stage 2)
+        // Also check the user itself (they may be a root with all partners now at Stage 3)
         User fresh = userRepository.findById(user.getId()).orElse(user);
         if (fresh.getCurrentLevel() == level && fresh.getCurrentStage() == 3
                 && allStage2FixedPartnersAtStage(fresh, 3)) {
