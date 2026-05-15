@@ -133,6 +133,7 @@ public class TreeService {
         // No node may have both slots occupied by Level 0 graduates.
         List<User> stage2Candidates = getStage2CandidatesInBfsOrder(1);
         for (User candidate : stage2Candidates) {
+            if (candidate.getId().equals(locked.getId())) continue; // не ставить под самого себя
             User host = userRepository.findByIdForUpdate(candidate.getId()).orElse(candidate);
 
             boolean leftIsLevel0  = host.getFixedPartnerLeft() != null
