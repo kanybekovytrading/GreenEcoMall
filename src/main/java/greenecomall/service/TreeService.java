@@ -1359,20 +1359,6 @@ public class TreeService {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // INTERNAL: LEVEL TRANSITION
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * After advancing to the next level, the user's two fixed partners are placed
-     * into their Stage-1 tree for that new level (same partners, no new race).
-     */
-    private void reEnterNextLevel(User user, int level) {
-        User left  = user.getFixedPartnerLeft();
-        User right = user.getFixedPartnerRight();
-        if (left  != null) bfsPlace(user, left,  level, 1);
-        if (right != null) bfsPlace(user, right, level, 1); // return value unused here
-    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // INTERNAL: HELPERS
