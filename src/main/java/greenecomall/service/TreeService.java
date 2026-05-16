@@ -809,20 +809,18 @@ public class TreeService {
         // not through this general-purpose check.
         if (fresh.getRegistrationPlan() == RegistrationPlan.FAST_START) return;
 
-        // Standard: needs 6 positions (2 tiers)
-        int tier1 = treePositionRepo.countByParentAndLevelAndStage(fresh, level, 1);
-        if (tier1 < 2) return;
-
+        // Standard: needs 6 REAL positions (2 tiers) — accelerators must not count.
         List<TreePosition> directChildren = treePositionRepo.findByParentAndLevelAndStage(fresh, level, 1);
-        // Only traverse REAL (non-accelerator) tier-1 nodes for tier-2 count.
-        // Accelerators store the Stage-3 graduate's user_id as their "user" — counting their children
-        // would pull in that graduate's own matrix and massively over-count.
-        int tier2 = directChildren.stream()
+        long realTier1 = directChildren.stream().filter(c -> !c.getIsAccelerator()).count();
+        if (realTier1 < 2) return;
+
+        long realTier2 = directChildren.stream()
                 .filter(c -> !c.getIsAccelerator())
-                .mapToInt(c -> treePositionRepo.countByParentAndLevelAndStage(c.getUser(), level, 1))
+                .mapToLong(c -> treePositionRepo.findByParentAndLevelAndStage(c.getUser(), level, 1)
+                        .stream().filter(t -> !t.getIsAccelerator()).count())
                 .sum();
 
-        if (tier1 + tier2 >= 6) {
+        if (realTier1 + realTier2 >= 6) {
             onStage1Completed(fresh, level);
         }
     }
@@ -1814,13 +1812,24 @@ public class TreeService {
                     .forEach(child -> {
                         TreePosition childPos = child;
                         boolean accel = childPos.getIsAccelerator();
+                        // A user who has advanced past this stage should always display as COMPLETED,
+                        // even if the tree_position.stage_status was never updated (stale IN_PROGRESS).
+                        StageStatus childStatus;
+                        if (accel) {
+                            childStatus = childPos.getStageStatus();
+                        } else {
+                            User cu = childPos.getUser();
+                            boolean advanced = cu.getCurrentLevel() > level
+                                    || (cu.getCurrentLevel() == level && cu.getCurrentStage() > stage);
+                            childStatus = advanced ? StageStatus.COMPLETED : childPos.getStageStatus();
+                        }
                         childNodes.add(TreeNodeResponse.builder()
                                 .userId(accel ? null : childPos.getUser().getId())
                                 .name(accel ? null : childPos.getUser().getFirstName() + " " + childPos.getUser().getLastName())
                                 .initials(accel ? null : initials(childPos.getUser()))
                                 .position(childPos.getPosition())
                                 .isAccelerator(accel)
-                                .stageStatus(childPos.getStageStatus())
+                                .stageStatus(childStatus)
                                 .acceleratorAssisted(accel ? null : Boolean.TRUE.equals(childPos.getUser().getAcceleratorAssisted()))
                                 .children(accel ? List.of() : buildNode(childPos.getUser(), level, stage, depth - 1).children())
                                 .build());
