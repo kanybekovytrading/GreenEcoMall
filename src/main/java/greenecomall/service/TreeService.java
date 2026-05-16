@@ -755,6 +755,24 @@ public class TreeService {
      * and both partners are now on Stage 4 — which triggers Stage 4 completion for the inviter.
      */
     private void checkStage4Progress(User user, int level) {
+        // Self-check: if THIS user is at Stage 4 and both their own fixed partners are too,
+        // they complete Stage 4 (covers the case where they advanced to Stage 4 AFTER both
+        // partners were already there, so the partner-side trigger never fired for them).
+        User freshSelf = userRepository.findById(user.getId()).orElse(user);
+        if (freshSelf.getCurrentLevel() == level && freshSelf.getCurrentStage() == 4) {
+            boolean ownLeftDone  = freshSelf.getFixedPartnerLeft()  != null
+                    && userRepository.findById(freshSelf.getFixedPartnerLeft().getId())
+                            .map(u -> u.getCurrentStage() >= 4).orElse(false);
+            boolean ownRightDone = freshSelf.getFixedPartnerRight() != null
+                    && userRepository.findById(freshSelf.getFixedPartnerRight().getId())
+                            .map(u -> u.getCurrentStage() >= 4).orElse(false);
+            if (ownLeftDone && ownRightDone) {
+                onStage4Completed(freshSelf, level);
+                return;
+            }
+        }
+
+        // Host-check: does my host now have both partners at Stage 4?
         User host = userRepository.findStage2HostOf(user).orElse(null);
         if (host == null) return;
 
@@ -1056,12 +1074,16 @@ public class TreeService {
      * accelerators. Returns that root so the new accelerator stacks alongside existing ones.
      */
     private User findGlobalAcceleratorStackRoot(User placer, int level) {
-        // Must have existing accelerators (stacking) AND still have a physically free slot
+        // Must have existing accelerators (stacking) AND still have a physically free slot.
+        // Only pick ROOTS of Stage-1 matrices (no parent in tree_positions) to avoid placing
+        // accelerators inside already-completed matrices whose children are still at Stage 1.
         return userRepository.findAll().stream()
                 .filter(u -> !u.getId().equals(placer.getId()))
                 .filter(u -> u.getCurrentLevel() == level && u.getCurrentStage() == 1
                           && u.getAccountStatus() == greenecomall.enums.AccountStatus.ACTIVE
                           && u.getRegistrationPlan() != RegistrationPlan.FAST_START)
+                .filter(u -> treePositionRepo.findByUserAndLevelAndStage(u, level, 1)
+                        .map(p -> p.getParent() == null).orElse(true))
                 .filter(u -> countAcceleratorsInSubTree(u, level) > 0)
                 .filter(u -> hasFreeSlotsInSubTree(u, level))
                 .max(Comparator.comparingInt(u -> countAcceleratorsInSubTree(u, level)))
@@ -1089,6 +1111,8 @@ public class TreeService {
                 .filter(u -> u.getCurrentLevel() == level && u.getCurrentStage() == 1
                           && u.getAccountStatus() == greenecomall.enums.AccountStatus.ACTIVE
                           && u.getRegistrationPlan() != RegistrationPlan.FAST_START)
+                .filter(u -> treePositionRepo.findByUserAndLevelAndStage(u, level, 1)
+                        .map(p -> p.getParent() == null).orElse(true))
                 .filter(u -> hasFreeSlotsInSubTree(u, level))
                 .min(Comparator.comparing(u -> u.getActivatedAt() != null
                         ? u.getActivatedAt() : java.time.LocalDateTime.MAX))
@@ -1280,21 +1304,22 @@ public class TreeService {
     /**
      * Returns true if placing an accelerator as a child of `node` will eventually
      * be cleaned up by a Stage-1 completion event.
-     * This is the case when `node` itself OR its direct parent in the tree is still
-     * at Stage 1 — so checkStage1UpTheChain will find an active matrix to complete.
+     * Walks up to the matrix root (node with no parent in tree_positions) and verifies
+     * that root is still at Stage 1 — prevents placing accelerators in completed matrices
+     * whose tier-1/2 children are themselves still at Stage 1.
      */
     private boolean canAcceleratorBeCleanedUp(User node, int level) {
-        User fresh = userRepository.findById(node.getId()).orElse(node);
-        if (fresh.getCurrentLevel() == level && fresh.getCurrentStage() == 1) return true;
-
-        Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(node, level, 1);
-        if (pos.isPresent() && pos.get().getParent() != null) {
-            User parent = userRepository.findById(pos.get().getParent().getId()).orElse(null);
-            if (parent != null && parent.getCurrentLevel() == level && parent.getCurrentStage() == 1) {
-                return true;
-            }
+        Set<UUID> visited = new HashSet<>();
+        User root = userRepository.findById(node.getId()).orElse(node);
+        while (visited.add(root.getId())) {
+            Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(root, level, 1);
+            if (pos.isEmpty() || pos.get().getParent() == null) break;
+            UUID parentId = pos.get().getParent().getId();
+            User parent = userRepository.findById(parentId).orElse(null);
+            if (parent == null) break;
+            root = parent;
         }
-        return false;
+        return root.getCurrentLevel() == level && root.getCurrentStage() == 1;
     }
 
     /**
