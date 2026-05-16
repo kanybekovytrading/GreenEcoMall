@@ -649,8 +649,9 @@ public class TreeService {
 
         savePosition(realUser, parent, level, stage, position);
 
-        // Re-place the displaced accelerator starting from the new real user's subtree
-        bfsPlaceAccelerator(accOwner, realUser, level);
+        // Re-place the displaced accelerator starting from the parent so it lands in the
+        // sibling slot (pos 2 if pos 1 was taken), not one tier deeper under the real user.
+        bfsPlaceAccelerator(accOwner, parent, level);
     }
 
     private void savePosition(User user, User parent, int level, int stage, int position) {
