@@ -791,41 +791,43 @@ public class TreeService {
         // 1. Walk up inviter's chain (via Stage-1 BFS tree) for a direct Stage-2 ancestor
         User ancestor = findFirstStage2Ancestor(user, level);
 
-        // 2. If no direct ancestor, walk up the fixed-partner tree from the inviter.
-        //    Inviter is at Stage 3+ → go to inviter's host, host's host, etc.
+        // 2. If no direct ancestor, walk up the fixed-partner tree from the inviter to the
+        //    TOPMOST non-ADMIN host, then search that whole subtree at once so sibling
+        //    branches (e.g. eeeeeeee under Wedina) are not missed.
         if (ancestor == null) {
             User inviter = user.getInviter();
             if (inviter != null) {
                 User host = userRepository.findStage2HostOf(inviter).orElse(null);
-                while (host != null) {
-                    if (host.getRole() != greenecomall.enums.Role.ADMIN) {
-                        User t = findWeakestStage2Target(host, level);
-                        if (t != null) { ancestor = host; break; }
-                    }
+                User topHost = null;
+                while (host != null && host.getRole() != greenecomall.enums.Role.ADMIN) {
+                    topHost = host;
                     host = userRepository.findStage2HostOf(host).orElse(null);
+                }
+                if (topHost != null) {
+                    User t = findWeakestStage2Target(topHost, level);
+                    if (t != null) ancestor = topHost;
                 }
             }
         }
 
         // 3. If still no ancestor (inviter is a root of fixed-partner tree with no host),
-        //    walk UP the Stage-1 BFS parent chain and try findWeakestStage2Target from
-        //    each ancestor's fixed-partner host.  This covers cases like Rrrrr whose
-        //    inviter (Azamat) is a root — but Asan (Stage-1 parent) is hosted by Бектур,
-        //    which is hosted by Andrey, hosted by Ainazik whose subtree contains Lola.
+        //    walk UP the Stage-1 BFS parent chain, find the topmost host for each ancestor,
+        //    and search from there.
         if (ancestor == null) {
             Set<UUID> visitedChain = new HashSet<>();
             Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(user, level, 1);
             User cur = pos.map(TreePosition::getParent).orElse(null);
             while (cur != null && visitedChain.add(cur.getId())) {
                 User host = userRepository.findStage2HostOf(cur).orElse(null);
-                while (host != null) {
-                    if (host.getRole() != greenecomall.enums.Role.ADMIN) {
-                        User t = findWeakestStage2Target(host, level);
-                        if (t != null) { ancestor = host; break; }
-                    }
+                User topHost = null;
+                while (host != null && host.getRole() != greenecomall.enums.Role.ADMIN) {
+                    topHost = host;
                     host = userRepository.findStage2HostOf(host).orElse(null);
                 }
-                if (ancestor != null) break;
+                if (topHost != null) {
+                    User t = findWeakestStage2Target(topHost, level);
+                    if (t != null) { ancestor = topHost; break; }
+                }
                 Optional<TreePosition> parentPos = treePositionRepo.findByUserAndLevelAndStage(cur, level, 1);
                 cur = parentPos.map(TreePosition::getParent).orElse(null);
             }
