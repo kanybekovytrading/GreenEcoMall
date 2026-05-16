@@ -60,6 +60,7 @@ public class AdminController {
     private final PaymentService paymentService;
     private final TreeService treeService;
     private final NewsService newsService;
+    private final greenecomall.repository.TreePositionRepository treePositionRepository;
 
     @Operation(summary = "Список пользователей",
             description = "Возвращает всех пользователей с пагинацией.")
@@ -453,26 +454,175 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok(results));
     }
 
-    // ── Тест: быстрый сид ────────────────────────────────────────────────────
+    // ── Тест: сценарий через реальные методы ────────────────────────────────
 
-    @Operation(summary = "Быстро сид-пользователя до нужного уровня/этапа",
+    @Operation(summary = "Прогоняет реальный сценарий до нужного этапа",
             description = """
-                    Создаёт фейковых пользователей и напрямую выставляет позиции в дереве,
-                    фиксированных партнёров и current_stage — без прохождения обычной логики.
-                    Удобно для тестирования UI каждого этапа после очистки БД.
+                    Создаёт реальных пользователей через registerByAdmin + activateUserById,
+                    что запускает настоящие триггеры (placeNewUser, checkStage1Progress,
+                    fillStage2UnderInviter, checkStage3Progress, checkStage4Progress).
 
-                    `level`: 1–4, `stage`: 1–4
+                    Stage 1 → 6 пользователей под root
+                    Stage 2 → +12 (под tier1L и tier1R) — root получает 2 фикс. партнёра
+                    Stage 3 → +24 под tier-1 детей партнёров; листья ставятся напрямую,
+                              но checkStage3Progress вызывается настоящий
+                    Stage 4 → прямо ставит партнёров на Stage 4, checkStage4Progress настоящий
+
+                    Каждый шаг возвращает лог: что произошло и правильно ли перешёл этап.
                     """)
-    @PostMapping("/test/seed-to-stage")
-    public ResponseEntity<ApiResponse<String>> seedToStage(
+    @PostMapping("/test/run-scenario")
+    public ResponseEntity<ApiResponse<List<String>>> runScenario(
             @RequestParam UUID userId,
             @RequestParam int level,
             @RequestParam int stage) {
 
-        User user = userRepository.findById(userId)
+        User root = userRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.of(ErrorCode.USER_NOT_FOUND));
-        String result = treeService.seedToStage(user, level, stage);
-        return ResponseEntity.ok(ApiResponse.ok(result));
+
+        List<String> log = new ArrayList<>();
+        long seed = System.currentTimeMillis() % 1_000_000L;
+        int lv = level;
+
+        // ── Stage 1: 6 реальных пользователей под root ──────────────────────
+        log.add("=== STAGE 1 (нужно 6 польз. под root) ===");
+        List<User> rootKids = scenarioRegister(root, lv, 6, seed, log);
+        seed += 6;
+        root = userRepository.findById(root.getId()).orElseThrow();
+        log.add("Root: level=" + root.getCurrentLevel() + " stage=" + root.getCurrentStage()
+                + (root.getCurrentStage() >= 2 ? " ✓" : " ✗ Stage 1 не завершился!"));
+
+        if (stage == 1) return ResponseEntity.ok(ApiResponse.ok(log));
+
+        // ── Stage 2: по 6 под tier1L и tier1R ───────────────────────────────
+        log.add("=== STAGE 2 (нужно 6+6 под tier1L/tier1R) ===");
+        var tier1Pos = treePositionRepository.findByParentAndLevelAndStage(root, lv, 1);
+        User tier1L = tier1Pos.stream().filter(p -> p.getPosition() == 1)
+                .map(greenecomall.entity.TreePosition::getUser).findFirst().orElse(null);
+        User tier1R = tier1Pos.stream().filter(p -> p.getPosition() == 2)
+                .map(greenecomall.entity.TreePosition::getUser).findFirst().orElse(null);
+        if (tier1L == null || tier1R == null) {
+            log.add("✗ Не найдены tier1L / tier1R"); return ResponseEntity.ok(ApiResponse.ok(log));
+        }
+        log.add("tier1L=" + tier1L.getFirstName() + " tier1R=" + tier1R.getFirstName());
+        scenarioRegister(tier1L, lv, 6, seed, log); seed += 6;
+        root = userRepository.findById(root.getId()).orElseThrow();
+        log.add("Root fixedPartnerLeft=" + (root.getFixedPartnerLeft() != null
+                ? root.getFixedPartnerLeft().getFirstName() : "null"));
+        scenarioRegister(tier1R, lv, 6, seed, log); seed += 6;
+        root = userRepository.findById(root.getId()).orElseThrow();
+        log.add("Root: level=" + root.getCurrentLevel() + " stage=" + root.getCurrentStage()
+                + (root.getCurrentStage() >= 3 ? " ✓" : " ✗ Stage 2 не завершился!"));
+
+        if (stage == 2) return ResponseEntity.ok(ApiResponse.ok(log));
+
+        // ── Stage 3: дать фикс. партнёров tier-1 детям, потом trigger ────────
+        log.add("=== STAGE 3 ===");
+        tier1L = userRepository.findById(tier1L.getId()).orElseThrow();
+        tier1R = userRepository.findById(tier1R.getId()).orElseThrow();
+
+        // tier1L's tier-1 дети станут его фикс. партнёрами после своего Stage 1
+        var t1lKids = treePositionRepository.findByParentAndLevelAndStage(tier1L, lv, 1);
+        User q1L = t1lKids.stream().filter(p -> p.getPosition() == 1)
+                .map(greenecomall.entity.TreePosition::getUser).findFirst().orElse(null);
+        User q1R = t1lKids.stream().filter(p -> p.getPosition() == 2)
+                .map(greenecomall.entity.TreePosition::getUser).findFirst().orElse(null);
+        var t1rKids = treePositionRepository.findByParentAndLevelAndStage(tier1R, lv, 1);
+        User q2L = t1rKids.stream().filter(p -> p.getPosition() == 1)
+                .map(greenecomall.entity.TreePosition::getUser).findFirst().orElse(null);
+        User q2R = t1rKids.stream().filter(p -> p.getPosition() == 2)
+                .map(greenecomall.entity.TreePosition::getUser).findFirst().orElse(null);
+
+        for (User kid : List.of(q1L, q1R, q2L, q2R)) {
+            if (kid == null) { log.add("✗ Не найден tier-1 ребёнок"); return ResponseEntity.ok(ApiResponse.ok(log)); }
+        }
+        log.add("Партнёры tier1L: q1L=" + q1L.getFirstName() + " q1R=" + q1R.getFirstName());
+        log.add("Партнёры tier1R: q2L=" + q2L.getFirstName() + " q2R=" + q2R.getFirstName());
+
+        // Регистрируем 6 под каждым → каждый завершает Stage 1 → становится фикс. партнёром
+        scenarioRegister(q1L, lv, 6, seed, log); seed += 6;
+        scenarioRegister(q1R, lv, 6, seed, log); seed += 6;
+        scenarioRegister(q2L, lv, 6, seed, log); seed += 6;
+        scenarioRegister(q2R, lv, 6, seed, log); seed += 6;
+
+        tier1L = userRepository.findById(tier1L.getId()).orElseThrow();
+        tier1R = userRepository.findById(tier1R.getId()).orElseThrow();
+        log.add("tier1L: stage=" + tier1L.getCurrentStage()
+                + " fixedL=" + (tier1L.getFixedPartnerLeft() != null ? tier1L.getFixedPartnerLeft().getFirstName() : "null")
+                + " fixedR=" + (tier1L.getFixedPartnerRight() != null ? tier1L.getFixedPartnerRight().getFirstName() : "null"));
+        log.add("tier1R: stage=" + tier1R.getCurrentStage()
+                + " fixedL=" + (tier1R.getFixedPartnerLeft() != null ? tier1R.getFixedPartnerLeft().getFirstName() : "null")
+                + " fixedR=" + (tier1R.getFixedPartnerRight() != null ? tier1R.getFixedPartnerRight().getFirstName() : "null"));
+
+        // q1L,q1R,q2L,q2R сейчас на Stage 2. Чтобы они перешли на Stage 3
+        // нужно было бы рекурсивно ещё 100+ польз. — ставим напрямую + реальный trigger
+        log.add("(Листья q1L/q1R/q2L/q2R ставим в Stage 3 напрямую, вызываем реальный checkStage3Progress)");
+        for (User leaf : List.of(q1L, q1R, q2L, q2R)) {
+            User lf = userRepository.findById(leaf.getId()).orElseThrow();
+            // Дать фиктивных sub-партнёров чтобы allStage2FixedPartnersAtStage вернул true
+            User sl = treeService.makeFakePartner(seed++, lv, 3);
+            User sr = treeService.makeFakePartner(seed++, lv, 3);
+            User sll = treeService.makeFakePartner(seed++, lv, 3);
+            User slr = treeService.makeFakePartner(seed++, lv, 3);
+            User srl = treeService.makeFakePartner(seed++, lv, 3);
+            User srr = treeService.makeFakePartner(seed++, lv, 3);
+            sl.setFixedPartnerLeft(sll); sl.setFixedPartnerRight(slr);
+            sr.setFixedPartnerLeft(srl); sr.setFixedPartnerRight(srr);
+            userRepository.save(sl); userRepository.save(sr);
+            lf.setFixedPartnerLeft(sl); lf.setFixedPartnerRight(sr);
+            lf.setCurrentStage(3);
+            userRepository.save(lf);
+        }
+        // Вызываем реальный checkStage3Progress → должен дойти до root
+        treeService.checkStage3ProgressPublic(q1R, lv);
+        treeService.checkStage3ProgressPublic(q2R, lv);
+
+        root = userRepository.findById(root.getId()).orElseThrow();
+        log.add("Root: level=" + root.getCurrentLevel() + " stage=" + root.getCurrentStage()
+                + (root.getCurrentStage() >= 4 ? " ✓" : " ✗ Stage 3 не завершился!"));
+
+        if (stage == 3) return ResponseEntity.ok(ApiResponse.ok(log));
+
+        // ── Stage 4: ставим обоих партнёров на Stage 4, реальный trigger ─────
+        log.add("=== STAGE 4 ===");
+        root = userRepository.findById(root.getId()).orElseThrow();
+        User fpl = root.getFixedPartnerLeft()  != null ? userRepository.findById(root.getFixedPartnerLeft().getId()).orElseThrow()  : null;
+        User fpr = root.getFixedPartnerRight() != null ? userRepository.findById(root.getFixedPartnerRight().getId()).orElseThrow() : null;
+        if (fpl == null || fpr == null) { log.add("✗ Нет фикс. партнёров у root"); return ResponseEntity.ok(ApiResponse.ok(log)); }
+        fpl.setCurrentStage(4); userRepository.save(fpl);
+        fpr.setCurrentStage(4); userRepository.save(fpr);
+        treeService.checkStage4ProgressPublic(fpr, lv);
+        root = userRepository.findById(root.getId()).orElseThrow();
+        log.add("Root: level=" + root.getCurrentLevel() + " stage=" + root.getCurrentStage()
+                + (root.getCurrentLevel() > lv ? " ✓ перешёл на уровень " + root.getCurrentLevel() : " ✗ Stage 4 не завершился!"));
+
+        return ResponseEntity.ok(ApiResponse.ok(log));
+    }
+
+    private List<User> scenarioRegister(User inviter, int level, int count, long seed, List<String> log) {
+        List<User> created = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            String tag = String.format("%09d", (seed + i) % 1_000_000_000L);
+            greenecomall.dto.request.RegisterRequest req = new greenecomall.dto.request.RegisterRequest(
+                    "Auto" + tag, "Test",
+                    "+996" + tag.substring(0, 9),
+                    "PP" + tag,
+                    "test123456",
+                    inviter.getReferralCode(),
+                    greenecomall.enums.RegistrationPlan.STANDARD,
+                    "testword"
+            );
+            try {
+                greenecomall.dto.response.RegisterResponse resp = authService.registerByAdmin(req);
+                paymentService.activateUserById(resp.userId());
+                userRepository.findById(resp.userId()).ifPresent(u -> {
+                    created.add(u);
+                    log.add("  Создан: " + u.getFirstName() + " (ref=" + inviter.getFirstName() + ")");
+                });
+            } catch (Exception ex) {
+                log.add("  ОШИБКА при создании #" + i + ": " + ex.getMessage());
+            }
+        }
+        return created;
     }
 
     // ── Новости ──────────────────────────────────────────────────────────────
