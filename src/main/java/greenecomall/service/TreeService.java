@@ -792,10 +792,7 @@ public class TreeService {
         User ancestor = findFirstStage2Ancestor(user, level);
 
         // 2. If no direct ancestor, walk up the fixed-partner tree from the inviter.
-        //    This handles the case where the inviter is already at Stage 3+ (both slots filled):
-        //    we move to the inviter's host, then the host's host, etc., and find the
-        //    weakest Stage-2 slot within that subtree.  This keeps placements inside the
-        //    correct organisational branch rather than jumping to an unrelated branch.
+        //    Inviter is at Stage 3+ → go to inviter's host, host's host, etc.
         if (ancestor == null) {
             User inviter = user.getInviter();
             if (inviter != null) {
@@ -803,13 +800,34 @@ public class TreeService {
                 while (host != null) {
                     if (host.getRole() != greenecomall.enums.Role.ADMIN) {
                         User t = findWeakestStage2Target(host, level);
-                        if (t != null) {
-                            ancestor = host;
-                            break;
-                        }
+                        if (t != null) { ancestor = host; break; }
                     }
                     host = userRepository.findStage2HostOf(host).orElse(null);
                 }
+            }
+        }
+
+        // 3. If still no ancestor (inviter is a root of fixed-partner tree with no host),
+        //    walk UP the Stage-1 BFS parent chain and try findWeakestStage2Target from
+        //    each ancestor's fixed-partner host.  This covers cases like Rrrrr whose
+        //    inviter (Azamat) is a root — but Asan (Stage-1 parent) is hosted by Бектур,
+        //    which is hosted by Andrey, hosted by Ainazik whose subtree contains Lola.
+        if (ancestor == null) {
+            Set<UUID> visitedChain = new HashSet<>();
+            Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(user, level, 1);
+            User cur = pos.map(TreePosition::getParent).orElse(null);
+            while (cur != null && visitedChain.add(cur.getId())) {
+                User host = userRepository.findStage2HostOf(cur).orElse(null);
+                while (host != null) {
+                    if (host.getRole() != greenecomall.enums.Role.ADMIN) {
+                        User t = findWeakestStage2Target(host, level);
+                        if (t != null) { ancestor = host; break; }
+                    }
+                    host = userRepository.findStage2HostOf(host).orElse(null);
+                }
+                if (ancestor != null) break;
+                Optional<TreePosition> parentPos = treePositionRepo.findByUserAndLevelAndStage(cur, level, 1);
+                cur = parentPos.map(TreePosition::getParent).orElse(null);
             }
         }
 
@@ -860,8 +878,12 @@ public class TreeService {
         Set<UUID> visited = new HashSet<>();
         queue.add(root);
 
-        List<User> onePartner  = new ArrayList<>();
-        List<User> zeroPartner = new ArrayList<>();
+        // Priority order: Fast-Start with 1 partner > Standard with 1 partner
+        //                 > Fast-Start with 0 partners > Standard with 0 partners
+        List<User> fsOne  = new ArrayList<>();
+        List<User> stdOne = new ArrayList<>();
+        List<User> fsZero  = new ArrayList<>();
+        List<User> stdZero = new ArrayList<>();
 
         while (!queue.isEmpty()) {
             User cur = queue.poll();
@@ -874,17 +896,19 @@ public class TreeService {
                     && fresh.getRole() != greenecomall.enums.Role.ADMIN) {
                 int partners = (fresh.getFixedPartnerLeft()  != null ? 1 : 0)
                              + (fresh.getFixedPartnerRight() != null ? 1 : 0);
-                if      (partners == 1) onePartner.add(fresh);
-                else if (partners == 0) zeroPartner.add(fresh);
+                boolean fs = fresh.getRegistrationPlan() == RegistrationPlan.FAST_START;
+                if      (partners == 1) { if (fs) fsOne.add(fresh);  else stdOne.add(fresh); }
+                else if (partners == 0) { if (fs) fsZero.add(fresh); else stdZero.add(fresh); }
             }
 
-            // Traverse deeper: left first (BFS left-to-right)
             if (fresh.getFixedPartnerLeft()  != null) queue.add(fresh.getFixedPartnerLeft());
             if (fresh.getFixedPartnerRight() != null) queue.add(fresh.getFixedPartnerRight());
         }
 
-        if (!onePartner.isEmpty())  return onePartner.get(0);
-        if (!zeroPartner.isEmpty()) return zeroPartner.get(0);
+        if (!fsOne.isEmpty())   return fsOne.get(0);
+        if (!stdOne.isEmpty())  return stdOne.get(0);
+        if (!fsZero.isEmpty())  return fsZero.get(0);
+        if (!stdZero.isEmpty()) return stdZero.get(0);
         return null;
     }
 
