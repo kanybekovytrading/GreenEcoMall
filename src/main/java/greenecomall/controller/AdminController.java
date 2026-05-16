@@ -416,31 +416,38 @@ public class AdminController {
 
         List<Map<String, String>> results = new ArrayList<>();
         long base = System.currentTimeMillis() % 10_000_000L;
+        int counter = 0;
 
-        for (int i = 0; i < entries.size(); i++) {
-            TestUserEntry e = entries.get(i);
-            String phone = "+99671" + String.format("%07d", base + i);
+        for (TestUserEntry e : entries) {
+            for (int pair = 1; pair <= 2; pair++) {
+                long idx = base + counter++;
+                String phone = "+99671" + String.format("%07d", idx);
+                String firstName = (e.firstName() != null && !e.firstName().isBlank())
+                        ? e.firstName() + (pair == 2 ? "2" : "") : "FST" + idx;
+                String lastName  = (e.lastName()  != null && !e.lastName().isBlank())
+                        ? e.lastName()  + (pair == 2 ? "2" : "") : "User" + idx;
 
-            greenecomall.dto.request.RegisterRequest req = new greenecomall.dto.request.RegisterRequest(
-                    e.firstName(), e.lastName(),
-                    phone,
-                    "FST" + (base + i),
-                    "test123456",
-                    e.inviterCode(),
-                    greenecomall.enums.RegistrationPlan.FAST_START,
-                    "testword"
-            );
+                greenecomall.dto.request.RegisterRequest req = new greenecomall.dto.request.RegisterRequest(
+                        firstName, lastName,
+                        phone,
+                        "FST" + idx,
+                        "test123456",
+                        e.inviterCode(),
+                        greenecomall.enums.RegistrationPlan.FAST_START,
+                        "testword"
+                );
 
-            greenecomall.dto.response.RegisterResponse reg = authService.registerByAdmin(req);
-            paymentService.activateUserById(reg.userId());
+                greenecomall.dto.response.RegisterResponse reg = authService.registerByAdmin(req);
+                paymentService.activateUserById(reg.userId());
 
-            greenecomall.entity.User created = userRepository.findById(reg.userId()).orElseThrow();
-            Map<String, String> row = new LinkedHashMap<>();
-            row.put("name", e.firstName() + " " + e.lastName());
-            row.put("userId", reg.userId().toString());
-            row.put("phone", phone);
-            row.put("referralCode", created.getReferralCode());
-            results.add(row);
+                greenecomall.entity.User created = userRepository.findById(reg.userId()).orElseThrow();
+                Map<String, String> row = new LinkedHashMap<>();
+                row.put("name", firstName + " " + lastName);
+                row.put("userId", reg.userId().toString());
+                row.put("phone", phone);
+                row.put("referralCode", created.getReferralCode());
+                results.add(row);
+            }
         }
 
         return ResponseEntity.ok(ApiResponse.ok(results));
