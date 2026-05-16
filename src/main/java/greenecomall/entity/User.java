@@ -72,6 +72,10 @@ public class User {
     @Column(nullable = false)
     private Integer currentStage;
 
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean acceleratorAssisted = false;
+
     @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "fixed_partner_left_id")

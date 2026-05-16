@@ -279,6 +279,12 @@ public class TreeService {
             bonusService.createStage1Bonuses(user, level, externalTier1, tier2Members);
         }
 
+        // Check before removal whether accelerators helped fill this matrix
+        boolean hadAccelerators = hasAcceleratorsInMatrix(user, level);
+        if (hadAccelerators) {
+            user.setAcceleratorAssisted(true);
+        }
+
         // Ускоритель выполнил свою задачу — удаляем его из матрицы
         removeAcceleratorsUnder(user, level);
 
@@ -1269,6 +1275,15 @@ public class TreeService {
      * Removes ALL accelerators within user's entire Stage-1 sub-tree (recursive).
      * Called when user completes Stage 1 — accelerators have served their purpose.
      */
+    private boolean hasAcceleratorsInMatrix(User user, int level) {
+        List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
+        if (tier1.stream().anyMatch(TreePosition::getIsAccelerator)) return true;
+        return tier1.stream()
+                .filter(c -> !c.getIsAccelerator())
+                .flatMap(c -> treePositionRepo.findByParentAndLevelAndStage(c.getUser(), level, 1).stream())
+                .anyMatch(TreePosition::getIsAccelerator);
+    }
+
     @Transactional
     public void removeAcceleratorsUnder(User user, int level) {
         Set<UUID> visited = new HashSet<>();

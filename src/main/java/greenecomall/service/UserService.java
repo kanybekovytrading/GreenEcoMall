@@ -45,6 +45,7 @@ public class UserService {
                 .activatedAt(u.getActivatedAt())
                 .registrationPlan(u.getRegistrationPlan())
                 .fastStartNumber(u.getFastStartNumber())
+                .acceleratorAssisted(Boolean.TRUE.equals(u.getAcceleratorAssisted()))
                 .build();
     }
 

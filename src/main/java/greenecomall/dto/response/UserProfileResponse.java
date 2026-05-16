@@ -32,5 +32,7 @@ public record UserProfileResponse(
         LocalDateTime activatedAt,
         RegistrationPlan registrationPlan,
         // null for STANDARD users; sequential number in Fast Start queue for FAST_START users
-        Integer fastStartNumber
+        Integer fastStartNumber,
+        // true if the user's Stage-1 matrix was completed with help from accelerators
+        Boolean acceleratorAssisted
 ) {}
