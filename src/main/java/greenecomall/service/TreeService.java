@@ -1474,18 +1474,21 @@ public class TreeService {
 
     @Transactional
     public void removeAcceleratorsUnder(User user, int level) {
-        Set<UUID> visited = new HashSet<>();
-        Queue<User> queue = new ArrayDeque<>();
-        queue.add(user);
-        while (!queue.isEmpty()) {
-            User cur = queue.poll();
-            if (!visited.add(cur.getId())) continue;
-            List<TreePosition> children = treePositionRepo.findByParentAndLevelAndStage(cur, level, 1);
-            for (TreePosition child : children) {
-                if (child.getIsAccelerator()) {
-                    treePositionRepo.delete(child);
-                } else {
-                    queue.add(child.getUser());
+        // Check tier-1 (direct children of root)
+        List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
+        for (TreePosition pos : tier1) {
+            if (Boolean.TRUE.equals(pos.getIsAccelerator())) {
+                treePositionRepo.delete(pos);
+            }
+        }
+        // Check tier-2 (children of each real tier-1 node)
+        for (TreePosition t1 : tier1) {
+            if (!Boolean.TRUE.equals(t1.getIsAccelerator())) {
+                List<TreePosition> tier2 = treePositionRepo.findByParentAndLevelAndStage(t1.getUser(), level, 1);
+                for (TreePosition pos : tier2) {
+                    if (Boolean.TRUE.equals(pos.getIsAccelerator())) {
+                        treePositionRepo.delete(pos);
+                    }
                 }
             }
         }
