@@ -1418,25 +1418,12 @@ public class TreeService {
 
     /**
      * Returns true if placing an accelerator as a child of `node` will eventually
-     * be cleaned up by a Stage-1 completion event.
-     * Walks up to the matrix root (node with no parent in tree_positions) and verifies
-     * that root is still at Stage 1 — prevents placing accelerators in completed matrices
-     * whose tier-1/2 children are themselves still at Stage 1.
+     * be cleaned up — i.e. a real user can displace it and help `node` complete Stage 1.
+     * Only requires that `node` itself is still working on Stage 1; ancestors' stages
+     * are irrelevant because chain propagation stops naturally at Stage-2+ nodes.
      */
     private boolean canAcceleratorBeCleanedUp(User node, int level) {
-        Set<UUID> visited = new HashSet<>();
-        User root = userRepository.findById(node.getId()).orElse(node);
-        while (visited.add(root.getId())) {
-            Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(root, level, 1);
-            if (pos.isEmpty() || pos.get().getParent() == null) break;
-            UUID parentId = pos.get().getParent().getId();
-            User parent = userRepository.findById(parentId).orElse(null);
-            if (parent == null) break;
-            // Parent already completed Stage 1 — cleanup won't propagate through them again
-            if (parent.getCurrentLevel() > level || parent.getCurrentStage() > 1) return false;
-            root = parent;
-        }
-        return root.getCurrentLevel() == level && root.getCurrentStage() == 1;
+        return node.getCurrentLevel() == level && node.getCurrentStage() == 1;
     }
 
     /**
