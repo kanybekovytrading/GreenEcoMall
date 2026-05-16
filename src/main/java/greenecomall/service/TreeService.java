@@ -1485,15 +1485,7 @@ public class TreeService {
                 if (child.getIsAccelerator()) {
                     treePositionRepo.delete(child);
                 } else {
-                    // Don't traverse into a tier-1 child that still has its own incomplete Stage-1
-                    // matrix — those accelerators belong to that child's own progression.
-                    User childUser = child.getUser();
-                    if (!childUser.getId().equals(user.getId())
-                            && childUser.getCurrentLevel() == level
-                            && childUser.getCurrentStage() == 1) {
-                        continue;
-                    }
-                    queue.add(childUser);
+                    queue.add(child.getUser());
                 }
             }
         }
