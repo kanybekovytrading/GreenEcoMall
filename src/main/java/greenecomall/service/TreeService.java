@@ -921,13 +921,22 @@ public class TreeService {
     private void fillStage2UnderInviter(User user, int level) {
         if (user.getRole() == greenecomall.enums.Role.ADMIN) return;
 
-        // 1. Walk up inviter's chain (via Stage-1 BFS tree) for a direct Stage-2 ancestor
+        // 1. Walk up Stage-1 BFS tree for a direct Stage-2 ancestor with a free slot.
         User ancestor = findFirstStage2Ancestor(user, level);
 
-        // 2. If no direct ancestor, walk up the fixed-partner tree from the inviter to the
-        //    TOPMOST non-ADMIN host, then search that whole subtree at once so sibling
-        //    branches (e.g. eeeeeeee under Wedina) are not missed.
+        // 1b. If no Stage-2 ancestor, look for a Stage-3+ ancestor and use the fixed partner
+        //     on the SAME BRANCH SIDE (left/right) as the completer in the Stage-1 tree.
+        //     Example: Омурбек2 is Ainazik's RIGHT child in Stage-1.
+        //     Ainazik is Stage-3, fixedRight=Омурбек5 → Омурбек2 goes into Омурбек5's subtree.
+        //     This is searched DIRECTLY (not walked up to root) to avoid cross-branch pollution.
+        User branchAnchor = null;
         if (ancestor == null) {
+            branchAnchor = findBranchAlignedStage2Anchor(user, level);
+        }
+
+        // 2. If no direct ancestor or branch anchor, walk up the fixed-partner tree from the
+        //    inviter to the TOPMOST non-ADMIN host, then search that whole subtree.
+        if (ancestor == null && branchAnchor == null) {
             User inviter = user.getInviter();
             if (inviter != null) {
                 User host = userRepository.findStage2HostOf(inviter).orElse(null);
@@ -943,10 +952,9 @@ public class TreeService {
             }
         }
 
-        // 3. If still no ancestor (inviter is a root of fixed-partner tree with no host),
-        //    walk UP the Stage-1 BFS parent chain, find the topmost host for each ancestor,
-        //    and search from there.
-        if (ancestor == null) {
+        // 3. If still no ancestor, walk UP the Stage-1 BFS parent chain, find the topmost
+        //    Stage-2 host for each ancestor, and search from there.
+        if (ancestor == null && branchAnchor == null) {
             Set<UUID> visitedChain = new HashSet<>();
             Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(user, level, 1);
             User cur = pos.map(TreePosition::getParent).orElse(null);
@@ -966,15 +974,22 @@ public class TreeService {
             }
         }
 
+        // Branch-anchor path: search directly within the branch-aligned subtree.
+        // Do NOT walk up to root — that would include the other branch and break alignment.
+        if (ancestor == null && branchAnchor != null) {
+            User target = findWeakestStage2Target(branchAnchor, level);
+            if (target == null) placeUnderFastStartGraduate(user, level);
+            else                placeAsFixedPartner(user, target, level);
+            return;
+        }
+
         if (ancestor == null) {
             placeUnderFastStartGraduate(user, level);
             return;
         }
 
-        // Walk UP the Stage-2 fixed-partner chain to the topmost host so that
-        // findWeakestStage2Target searches the full tree, not just ancestor's subtree.
-        // Example: ancestor=АЙнагул2 (0 partners) but her host АЙнагул5 has 1 partner
-        // and should receive the new user — walking up ensures АЙнагул5 is found first.
+        // Normal ancestor path: walk UP the Stage-2 fixed-partner chain to the topmost host
+        // so findWeakestStage2Target searches the full tree (catches 1-partner nodes higher up).
         User searchRoot = ancestor;
         User hostAbove = userRepository.findStage2HostOf(ancestor).orElse(null);
         while (hostAbove != null && hostAbove.getRole() != greenecomall.enums.Role.ADMIN) {
@@ -989,6 +1004,45 @@ public class TreeService {
         }
 
         placeAsFixedPartner(user, target, level);
+    }
+
+    /**
+     * Walks UP the Stage-1 BFS parent chain looking for a Stage-3+ ancestor.
+     * When found, returns the fixed partner of that ancestor on the SAME SIDE
+     * (position 1→fixedLeft, position 2→fixedRight) as the completer — ensuring
+     * that right-branch Stage-1 graduates land in the right-branch Stage-2 subtree.
+     *
+     * Example: Омурбек2 is Ainazik's RIGHT (position 2) child in Stage-1.
+     * Ainazik is Stage-3 with fixedRight=Омурбек5 → returns Омурбек5.
+     */
+    private User findBranchAlignedStage2Anchor(User user, int level) {
+        Set<UUID> visited = new HashSet<>();
+        Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(user, level, 1);
+        if (pos.isEmpty()) return null;
+
+        User child = user;
+        User parent = pos.map(TreePosition::getParent).orElse(null);
+
+        while (parent != null && visited.add(parent.getId())) {
+            User fresh = userRepository.findById(parent.getId()).orElse(null);
+            if (fresh == null || fresh.getRole() == greenecomall.enums.Role.ADMIN) break;
+
+            if (fresh.getCurrentLevel() == level && fresh.getCurrentStage() >= 3) {
+                Optional<TreePosition> childPos = treePositionRepo.findByUserAndLevelAndStage(child, level, 1);
+                if (childPos.isPresent()) {
+                    int side = childPos.get().getPosition(); // 1=left, 2=right
+                    User partner = (side == 1) ? fresh.getFixedPartnerLeft() : fresh.getFixedPartnerRight();
+                    if (partner != null && findWeakestStage2Target(partner, level) != null) {
+                        return partner;
+                    }
+                }
+            }
+
+            child = fresh;
+            Optional<TreePosition> parentPos = treePositionRepo.findByUserAndLevelAndStage(fresh, level, 1);
+            parent = parentPos.map(TreePosition::getParent).orElse(null);
+        }
+        return null;
     }
 
     private void placeAsFixedPartner(User user, User target, int level) {
