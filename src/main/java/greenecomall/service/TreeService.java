@@ -803,6 +803,22 @@ public class TreeService {
     private void fillStage2UnderInviter(User user, int level) {
         if (user.getRole() == greenecomall.enums.Role.ADMIN) return;
 
+        // 0. Direct inviter priority: if the inviter is at Stage 2 with a free slot,
+        //    place there immediately — referral code implies natural placement under inviter.
+        User inviterDirect = user.getInviter();
+        if (inviterDirect != null) {
+            User freshInviter = userRepository.findById(inviterDirect.getId()).orElse(null);
+            if (freshInviter != null
+                    && freshInviter.getRole() != greenecomall.enums.Role.ADMIN
+                    && freshInviter.getCurrentLevel() == level
+                    && freshInviter.getCurrentStage() == 2
+                    && (freshInviter.getFixedPartnerLeft() == null
+                            || freshInviter.getFixedPartnerRight() == null)) {
+                placeAsFixedPartner(user, freshInviter, level);
+                return;
+            }
+        }
+
         // 1. Walk up inviter's chain (via Stage-1 BFS tree) for a direct Stage-2 ancestor
         User ancestor = findFirstStage2Ancestor(user, level);
 
