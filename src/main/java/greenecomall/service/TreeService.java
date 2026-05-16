@@ -1268,7 +1268,22 @@ public class TreeService {
      * accelerators exist anywhere yet.
      */
     private void placeInOwnTeamLeftToRight(User user, int level, List<TreePosition> directChildren) {
-        // Try left branch first, then right
+        // Walk UP one level in the Stage-1 tree and run BFS from there.
+        // BFS is level-by-level, so it will find the weakest (fewest children, leftmost)
+        // node across ALL sibling branches before diving into the placer's own dense subtree.
+        Optional<TreePosition> myPos = treePositionRepo.findByUserAndLevelAndStage(user, level, 1);
+        if (myPos.isPresent() && myPos.get().getParent() != null) {
+            User parent = myPos.get().getParent();
+            if (parent.getRole() != greenecomall.enums.Role.ADMIN) {
+                User freshParent = userRepository.findById(parent.getId()).orElse(parent);
+                if (hasFreeSlotsInSubTree(freshParent, level)) {
+                    bfsPlaceAccelerator(user, freshParent, level);
+                    return;
+                }
+            }
+        }
+
+        // Fallback: placer is the root or parent has no free slots — search own subtree left→right
         for (int side : new int[]{1, 2}) {
             Optional<TreePosition> sideChild = directChildren.stream()
                     .filter(c -> c.getPosition() == side && !c.getIsAccelerator())
@@ -1278,7 +1293,7 @@ public class TreeService {
                 return;
             }
         }
-        // Both branches full (or no children at all) — place directly as own child
+        // Both branches full — place directly as own child
         int freeSide = directChildren.stream().noneMatch(c -> c.getPosition() == 1) ? 1 : 2;
         treePositionRepo.save(TreePosition.builder()
                 .user(user).parent(user).level(level).stage(1)
