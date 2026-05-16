@@ -230,17 +230,19 @@ public class TreeService {
     }
 
     /**
-     * Проверяет завершение Этапа 1 для node и его родителя в дереве.
-     * Это покрывает случаи когда новый юзер попал на тир 3+ от изначального inviter-а:
-     * он является тир-1 для node и тир-2 для node's parent.
+     * Checks Stage-1 completion for node and every ancestor up to the root of the BFS tree.
+     * A new user placed at tier-2 or deeper must bubble the check all the way up so the
+     * root (e.g. Rrrrr) is not missed when its matrix becomes full.
      */
     private void checkStage1UpTheChain(User node, int level) {
-        checkStage1Completion(node, level);
-        treePositionRepo.findByUserAndLevelAndStage(node, level, 1).ifPresent(pos -> {
-            if (pos.getParent() != null) {
-                checkStage1Completion(pos.getParent(), level);
-            }
-        });
+        Set<UUID> visited = new HashSet<>();
+        User cur = node;
+        while (cur != null && visited.add(cur.getId())) {
+            checkStage1Completion(cur, level);
+            Optional<TreePosition> pos = treePositionRepo.findByUserAndLevelAndStage(cur, level, 1);
+            if (pos.isEmpty() || pos.get().getParent() == null) break;
+            cur = pos.get().getParent();
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
