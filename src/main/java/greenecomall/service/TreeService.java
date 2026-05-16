@@ -1224,20 +1224,15 @@ public class TreeService {
             User target = findAcceleratorStackTarget(ownStackBranch.get(), level);
             bfsPlaceAccelerator(user, target, level);
         } else {
-            // 2. Global search: find Stage-1 tree with most accelerators (for stacking).
-            //    Old code only walked up the Stage-1 parent chain, missing unrelated trees
-            //    (e.g. Rrrrr's tree when Erulan is in a different branch).
-            User globalStack = findGlobalAcceleratorStackRoot(user, level);
-            if (globalStack != null) {
-                bfsPlaceAccelerator(user, globalStack, level);
+            // 2. Global stacking: find the parent node of ANY existing accelerator in the tree.
+            //    The new accelerator goes alongside it (fills the sibling slot) so all
+            //    accelerators concentrate in the same matrix rather than scattering.
+            User stackParent = findExistingAcceleratorParent(user, level);
+            if (stackParent != null) {
+                bfsPlaceAccelerator(user, stackParent, level);
             } else {
-                // 3. No accelerators anywhere — place in the earliest incomplete Stage-1 tree
-                User freeTarget = findGlobalFreeSlotRoot(user, level, directChildren);
-                if (freeTarget != null) {
-                    bfsPlaceAccelerator(user, freeTarget, level);
-                } else {
-                    placeInOwnWeakBranch(user, level, directChildren);
-                }
+                // 3. No accelerators anywhere yet — place in own team, left→right BFS.
+                placeInOwnTeamLeftToRight(user, level, directChildren);
             }
         }
 
@@ -1247,74 +1242,49 @@ public class TreeService {
     }
 
     /**
-     * Globally finds the Stage-1 root (other than `placer`) whose subtree has the most
-     * accelerators. Returns that root so the new accelerator stacks alongside existing ones.
+     * Finds the parent node of any existing accelerator (not placed by `placer`) that
+     * still has a free child slot. Used so subsequent accelerators stack alongside the
+     * first one rather than scattering to random matrices.
+     *
+     * The old approach looked for "Stage-1 roots with accelerators", but in a nested
+     * tree there are no stand-alone roots — every node has a parent — so it always
+     * returned null and stacking never worked.
      */
-    private User findGlobalAcceleratorStackRoot(User placer, int level) {
-        // Must have existing accelerators (stacking) AND still have a physically free slot.
-        // Only pick ROOTS of Stage-1 matrices (no parent in tree_positions) to avoid placing
-        // accelerators inside already-completed matrices whose children are still at Stage 1.
-        return userRepository.findAll().stream()
-                .filter(u -> !u.getId().equals(placer.getId()))
-                .filter(u -> u.getRole() != greenecomall.enums.Role.ADMIN)
-                .filter(u -> u.getCurrentLevel() == level && u.getCurrentStage() == 1
-                          && u.getAccountStatus() == greenecomall.enums.AccountStatus.ACTIVE
-                          && u.getRegistrationPlan() != RegistrationPlan.FAST_START)
-                .filter(u -> treePositionRepo.findByUserAndLevelAndStage(u, level, 1)
-                        .map(p -> p.getParent() == null).orElse(true))
-                .filter(u -> countAcceleratorsInSubTree(u, level) > 0)
-                .filter(u -> hasFreeSlotsInSubTree(u, level))
-                .max(Comparator.comparingInt(u -> countAcceleratorsInSubTree(u, level)))
+    private User findExistingAcceleratorParent(User placer, int level) {
+        return treePositionRepo.findAll().stream()
+                .filter(tp -> Boolean.TRUE.equals(tp.getIsAccelerator()))
+                .filter(tp -> tp.getLevel() == level && tp.getStage() == 1)
+                .filter(tp -> !tp.getUser().getId().equals(placer.getId()))
+                .map(TreePosition::getParent)
+                .filter(java.util.Objects::nonNull)
+                .filter(parent -> canAcceleratorBeCleanedUp(parent, level))
+                .filter(parent -> hasFreeSlotsInSubTree(parent, level))
+                .findFirst()
                 .orElse(null);
     }
 
     /**
-     * Globally finds the earliest (by activatedAt) Stage-1 root whose subtree has a free
-     * slot where an accelerator can be meaningfully placed (canAcceleratorBeCleanedUp).
-     * Falls back to own tree if nothing found globally.
+     * Places the accelerator in the placer's own team using BFS left→right (position 1
+     * before position 2 at every level). This is the initial placement when no
+     * accelerators exist anywhere yet.
      */
-    private User findGlobalFreeSlotRoot(User placer, int level, List<TreePosition> ownDirectChildren) {
-        // Check own tree first if it has free slots
-        long realTier1 = ownDirectChildren.stream().filter(c -> !c.getIsAccelerator()).count();
-        long realTier2 = ownDirectChildren.stream()
-                .filter(c -> !c.getIsAccelerator())
-                .mapToLong(c -> treePositionRepo.findByParentAndLevelAndStage(c.getUser(), level, 1)
-                        .stream().filter(t -> !t.getIsAccelerator()).count())
-                .sum();
-        boolean ownTreeComplete = (realTier1 + realTier2 >= 6);
-        if (!ownTreeComplete) return null; // own tree has room, let placeInOwnWeakBranch handle it
-
-        return userRepository.findAll().stream()
-                .filter(u -> !u.getId().equals(placer.getId()))
-                .filter(u -> u.getRole() != greenecomall.enums.Role.ADMIN)
-                .filter(u -> u.getCurrentLevel() == level && u.getCurrentStage() == 1
-                          && u.getAccountStatus() == greenecomall.enums.AccountStatus.ACTIVE
-                          && u.getRegistrationPlan() != RegistrationPlan.FAST_START)
-                .filter(u -> treePositionRepo.findByUserAndLevelAndStage(u, level, 1)
-                        .map(p -> p.getParent() == null).orElse(true))
-                .filter(u -> hasFreeSlotsInSubTree(u, level))
-                .min(Comparator.comparing(u -> u.getActivatedAt() != null
-                        ? u.getActivatedAt() : java.time.LocalDateTime.MAX))
-                .orElse(null);
-    }
-
-    private void placeInOwnWeakBranch(User user, int level, List<TreePosition> directChildren) {
-        int leftSize  = branchSize(user, level, 1);
-        int rightSize = branchSize(user, level, 2);
-        int weakSide  = (leftSize <= rightSize) ? 1 : 2;
-
-        Optional<TreePosition> weakDirectChild = directChildren.stream()
-                .filter(c -> c.getPosition() == weakSide)
-                .findFirst();
-
-        if (weakDirectChild.isEmpty()) {
-            treePositionRepo.save(TreePosition.builder()
-                    .user(user).parent(user).level(level).stage(1)
-                    .position(weakSide).isAccelerator(true)
-                    .stageStatus(StageStatus.IN_PROGRESS).build());
-        } else {
-            bfsPlaceAccelerator(user, weakDirectChild.get().getUser(), level);
+    private void placeInOwnTeamLeftToRight(User user, int level, List<TreePosition> directChildren) {
+        // Try left branch first, then right
+        for (int side : new int[]{1, 2}) {
+            Optional<TreePosition> sideChild = directChildren.stream()
+                    .filter(c -> c.getPosition() == side && !c.getIsAccelerator())
+                    .findFirst();
+            if (sideChild.isPresent() && hasFreeSlotsInSubTree(sideChild.get().getUser(), level)) {
+                bfsPlaceAccelerator(user, sideChild.get().getUser(), level);
+                return;
+            }
         }
+        // Both branches full (or no children at all) — place directly as own child
+        int freeSide = directChildren.stream().noneMatch(c -> c.getPosition() == 1) ? 1 : 2;
+        treePositionRepo.save(TreePosition.builder()
+                .user(user).parent(user).level(level).stage(1)
+                .position(freeSide).isAccelerator(true)
+                .stageStatus(StageStatus.IN_PROGRESS).build());
     }
 
     /**
