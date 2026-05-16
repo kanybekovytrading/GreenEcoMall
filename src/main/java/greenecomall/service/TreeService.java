@@ -1504,7 +1504,7 @@ public class TreeService {
                 .progress(TreeResponse.TreeProgress.builder().filled(filled).total(total).build())
                 .accelerator(TreeResponse.AcceleratorInfo.builder().active(hasAccelerator).build())
                 .fastStartNumber(isFastStartTree ? user.getFastStartNumber() : null)
-                .branches(isFastStartTree ? null : buildBranchStats(user, level))
+                .branches(isFastStartTree ? null : buildBranchStats(user, level, stage))
                 .build();
     }
 
@@ -1532,7 +1532,7 @@ public class TreeService {
                     .stageStatus(StageStatus.WAITING)
                     .progress(TreeResponse.TreeProgress.builder().filled(0).total(0).build())
                     .accelerator(TreeResponse.AcceleratorInfo.builder().active(false).build())
-                    .branches(buildBranchStats(user, level))
+                    .branches(buildBranchStats(user, level, 3))
                     .build();
         }
 
@@ -1552,7 +1552,7 @@ public class TreeService {
                 .stageStatus(rootStatus)
                 .progress(TreeResponse.TreeProgress.builder().filled(counts[0]).total(counts[1]).build())
                 .accelerator(TreeResponse.AcceleratorInfo.builder().active(false).build())
-                .branches(buildBranchStats(user, level))
+                .branches(buildBranchStats(user, level, 3))
                 .build();
     }
 
@@ -1651,7 +1651,7 @@ public class TreeService {
                 .stageStatus(status)
                 .progress(TreeResponse.TreeProgress.builder().filled(filled).total(2).build())
                 .accelerator(TreeResponse.AcceleratorInfo.builder().active(false).build())
-                .branches(buildBranchStats(user, level))
+                .branches(buildBranchStats(user, level, stage))
                 .build();
     }
 
@@ -2079,14 +2079,35 @@ public class TreeService {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    private TreeResponse.BranchStats buildBranchStats(User user, int level) {
-        List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
-        int leftSize  = (int) buildBranchInfo(user, level, 1, tier1).members().stream().count();
-        int rightSize = (int) buildBranchInfo(user, level, 2, tier1).members().stream().count();
+    private TreeResponse.BranchStats buildBranchStats(User user, int level, int stage) {
+        if (stage == 1) {
+            List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
+            int leftSize  = (int) buildBranchInfo(user, level, 1, tier1).members().stream().count();
+            int rightSize = (int) buildBranchInfo(user, level, 2, tier1).members().stream().count();
+            return TreeResponse.BranchStats.builder()
+                    .left(TreeResponse.BranchSide.builder().size(leftSize).build())
+                    .right(TreeResponse.BranchSide.builder().size(rightSize).build())
+                    .build();
+        }
+        // Stages 2/3/4: count fixed-partner subtree members that have reached this stage
+        int leftSize  = countFixedPartnerSide(user.getFixedPartnerLeft(),  level, stage, new HashSet<>(), 0);
+        int rightSize = countFixedPartnerSide(user.getFixedPartnerRight(), level, stage, new HashSet<>(), 0);
         return TreeResponse.BranchStats.builder()
                 .left(TreeResponse.BranchSide.builder().size(leftSize).build())
                 .right(TreeResponse.BranchSide.builder().size(rightSize).build())
                 .build();
+    }
+
+    private int countFixedPartnerSide(User partner, int level, int stage, Set<UUID> visited, int depth) {
+        if (partner == null || depth > 1) return 0;
+        User u = userRepository.findById(partner.getId()).orElse(null);
+        if (u == null || !visited.add(u.getId())) return 0;
+        boolean reached = u.getCurrentLevel() > level
+                || (u.getCurrentLevel() == level && u.getCurrentStage() >= stage);
+        int count = reached ? 1 : 0;
+        count += countFixedPartnerSide(u.getFixedPartnerLeft(),  level, stage, visited, depth + 1);
+        count += countFixedPartnerSide(u.getFixedPartnerRight(), level, stage, visited, depth + 1);
+        return count;
     }
 
     public BranchStatsResponse getBranchStats(User user) {
