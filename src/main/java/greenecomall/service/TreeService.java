@@ -809,18 +809,19 @@ public class TreeService {
         // not through this general-purpose check.
         if (fresh.getRegistrationPlan() == RegistrationPlan.FAST_START) return;
 
-        // Standard: needs 6 REAL positions (2 tiers) — accelerators must not count.
+        // Standard: needs 6 filled positions (2 tiers). Accelerators occupy real tier-2 slots
+        // and count toward completion. Only tier-1 must be real people (accelerators placed
+        // directly under the root inflate tier1 count and must be excluded).
         List<TreePosition> directChildren = treePositionRepo.findByParentAndLevelAndStage(fresh, level, 1);
         long realTier1 = directChildren.stream().filter(c -> !c.getIsAccelerator()).count();
         if (realTier1 < 2) return;
 
-        long realTier2 = directChildren.stream()
+        long tier2 = directChildren.stream()
                 .filter(c -> !c.getIsAccelerator())
-                .mapToLong(c -> treePositionRepo.findByParentAndLevelAndStage(c.getUser(), level, 1)
-                        .stream().filter(t -> !t.getIsAccelerator()).count())
+                .mapToLong(c -> treePositionRepo.countByParentAndLevelAndStage(c.getUser(), level, 1))
                 .sum();
 
-        if (realTier1 + realTier2 >= 6) {
+        if (realTier1 + tier2 >= 6) {
             onStage1Completed(fresh, level);
         }
     }
