@@ -803,22 +803,6 @@ public class TreeService {
     private void fillStage2UnderInviter(User user, int level) {
         if (user.getRole() == greenecomall.enums.Role.ADMIN) return;
 
-        // 0. Direct inviter priority: if the inviter is at Stage 2 with a free slot,
-        //    place there immediately — referral code implies natural placement under inviter.
-        User inviterDirect = user.getInviter();
-        if (inviterDirect != null) {
-            User freshInviter = userRepository.findById(inviterDirect.getId()).orElse(null);
-            if (freshInviter != null
-                    && freshInviter.getRole() != greenecomall.enums.Role.ADMIN
-                    && freshInviter.getCurrentLevel() == level
-                    && freshInviter.getCurrentStage() == 2
-                    && (freshInviter.getFixedPartnerLeft() == null
-                            || freshInviter.getFixedPartnerRight() == null)) {
-                placeAsFixedPartner(user, freshInviter, level);
-                return;
-            }
-        }
-
         // 1. Walk up inviter's chain (via Stage-1 BFS tree) for a direct Stage-2 ancestor
         User ancestor = findFirstStage2Ancestor(user, level);
 
@@ -903,20 +887,19 @@ public class TreeService {
 
     /**
      * BFS through the Stage 2 team rooted at `root` (via fixedPartnerLeft/Right links).
-     * Returns the weakest candidate: has exactly 1 partner first (needs 1 more to complete),
-     * then 0 partners. Within each priority group, BFS left-to-right order is preserved.
+     * Priority: users with 1 partner (one slot left) before users with 0 partners.
+     * Within each group BFS order is preserved (shallower = earlier = higher priority).
+     * Registration plan is NOT used as a tie-breaker — depth in tree decides instead,
+     * so long-waiting users closer to root (e.g. Zamir, Ahun) are never starved by
+     * a stream of new FAST_START users appearing at greater depth.
      */
     private User findWeakestStage2Target(User root, int level) {
         Queue<User> queue = new ArrayDeque<>();
         Set<UUID> visited = new HashSet<>();
         queue.add(root);
 
-        // Priority order: Fast-Start with 1 partner > Standard with 1 partner
-        //                 > Fast-Start with 0 partners > Standard with 0 partners
-        List<User> fsOne  = new ArrayList<>();
-        List<User> stdOne = new ArrayList<>();
-        List<User> fsZero  = new ArrayList<>();
-        List<User> stdZero = new ArrayList<>();
+        List<User> onePartner  = new ArrayList<>();
+        List<User> zeroPartner = new ArrayList<>();
 
         while (!queue.isEmpty()) {
             User cur = queue.poll();
@@ -929,19 +912,16 @@ public class TreeService {
                     && fresh.getRole() != greenecomall.enums.Role.ADMIN) {
                 int partners = (fresh.getFixedPartnerLeft()  != null ? 1 : 0)
                              + (fresh.getFixedPartnerRight() != null ? 1 : 0);
-                boolean fs = fresh.getRegistrationPlan() == RegistrationPlan.FAST_START;
-                if      (partners == 1) { if (fs) fsOne.add(fresh);  else stdOne.add(fresh); }
-                else if (partners == 0) { if (fs) fsZero.add(fresh); else stdZero.add(fresh); }
+                if      (partners == 1) onePartner.add(fresh);
+                else if (partners == 0) zeroPartner.add(fresh);
             }
 
             if (fresh.getFixedPartnerLeft()  != null) queue.add(fresh.getFixedPartnerLeft());
             if (fresh.getFixedPartnerRight() != null) queue.add(fresh.getFixedPartnerRight());
         }
 
-        if (!fsOne.isEmpty())   return fsOne.get(0);
-        if (!stdOne.isEmpty())  return stdOne.get(0);
-        if (!fsZero.isEmpty())  return fsZero.get(0);
-        if (!stdZero.isEmpty()) return stdZero.get(0);
+        if (!onePartner.isEmpty())  return onePartner.get(0);
+        if (!zeroPartner.isEmpty()) return zeroPartner.get(0);
         return null;
     }
 
