@@ -971,8 +971,18 @@ public class TreeService {
             return;
         }
 
-        // BFS the Stage-2 team rooted at ancestor to find the weakest slot.
-        User target = findWeakestStage2Target(ancestor, level);
+        // Walk UP the Stage-2 fixed-partner chain to the topmost host so that
+        // findWeakestStage2Target searches the full tree, not just ancestor's subtree.
+        // Example: ancestor=АЙнагул2 (0 partners) but her host АЙнагул5 has 1 partner
+        // and should receive the new user — walking up ensures АЙнагул5 is found first.
+        User searchRoot = ancestor;
+        User hostAbove = userRepository.findStage2HostOf(ancestor).orElse(null);
+        while (hostAbove != null && hostAbove.getRole() != greenecomall.enums.Role.ADMIN) {
+            searchRoot = hostAbove;
+            hostAbove = userRepository.findStage2HostOf(searchRoot).orElse(null);
+        }
+
+        User target = findWeakestStage2Target(searchRoot, level);
         if (target == null) {
             placeUnderFastStartGraduate(user, level);
             return;
