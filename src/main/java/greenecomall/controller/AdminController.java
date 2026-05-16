@@ -453,6 +453,28 @@ public class AdminController {
         return ResponseEntity.ok(ApiResponse.ok(results));
     }
 
+    // ── Тест: быстрый сид ────────────────────────────────────────────────────
+
+    @Operation(summary = "Быстро сид-пользователя до нужного уровня/этапа",
+            description = """
+                    Создаёт фейковых пользователей и напрямую выставляет позиции в дереве,
+                    фиксированных партнёров и current_stage — без прохождения обычной логики.
+                    Удобно для тестирования UI каждого этапа после очистки БД.
+
+                    `level`: 1–4, `stage`: 1–4
+                    """)
+    @PostMapping("/test/seed-to-stage")
+    public ResponseEntity<ApiResponse<String>> seedToStage(
+            @RequestParam UUID userId,
+            @RequestParam int level,
+            @RequestParam int stage) {
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> BusinessException.of(ErrorCode.USER_NOT_FOUND));
+        String result = treeService.seedToStage(user, level, stage);
+        return ResponseEntity.ok(ApiResponse.ok(result));
+    }
+
     // ── Новости ──────────────────────────────────────────────────────────────
 
     @Operation(summary = "Статистика новостей — 4 карточки")

@@ -388,6 +388,124 @@ public class TreeService {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // ADMIN: SEED / TEST DATA
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Fast-seeds a user to any target level/stage by creating fake users and
+     * directly setting all tree positions, fixed partners, and stage values.
+     * Intended for test environments only.
+     */
+    @Transactional
+    public String seedToStage(User user, int targetLevel, int targetStage) {
+        user = userRepository.findByIdForUpdate(user.getId()).orElse(user);
+        long seed = System.currentTimeMillis() % 10_000_000L;
+
+        // ── Stage 1: 6-person BFS tree ──────────────────────────────────────
+        treePositionRepo.findByParentAndLevelAndStage(user, targetLevel, 1)
+                .forEach(treePositionRepo::delete);
+        user.setFixedPartnerLeft(null);
+        user.setFixedPartnerRight(null);
+        userRepository.save(user);
+
+        int s1ChildStage = targetStage > 1 ? 2 : 1;
+        User t1L = makeFake("SdL1",  seed,     targetLevel, s1ChildStage);
+        User t1R = makeFake("SdR1",  seed + 1, targetLevel, s1ChildStage);
+        User t2LL = makeFake("SdLL", seed + 2, targetLevel, s1ChildStage);
+        User t2LR = makeFake("SdLR", seed + 3, targetLevel, s1ChildStage);
+        User t2RL = makeFake("SdRL", seed + 4, targetLevel, s1ChildStage);
+        User t2RR = makeFake("SdRR", seed + 5, targetLevel, s1ChildStage);
+
+        savePosition(t1L,  user, targetLevel, 1, 1);
+        savePosition(t1R,  user, targetLevel, 1, 2);
+        savePosition(t2LL, t1L,  targetLevel, 1, 1);
+        savePosition(t2LR, t1L,  targetLevel, 1, 2);
+        savePosition(t2RL, t1R,  targetLevel, 1, 1);
+        savePosition(t2RR, t1R,  targetLevel, 1, 2);
+
+        if (targetStage == 1) {
+            user.setCurrentLevel(targetLevel);
+            user.setCurrentStage(1);
+            userRepository.save(user);
+            return "Seeded Level " + targetLevel + " Stage 1: 6 fake users in BFS tree";
+        }
+
+        // Mark stage-1 positions COMPLETED (so the tree shows green)
+        for (User u : List.of(t1L, t1R, t2LL, t2LR, t2RL, t2RR)) {
+            treePositionRepo.findByUserAndLevelAndStage(u, targetLevel, 1).ifPresent(pos -> {
+                pos.setStageStatus(StageStatus.COMPLETED);
+                treePositionRepo.save(pos);
+            });
+        }
+
+        // ── Stage 2: fixed partners ──────────────────────────────────────────
+        int s2ChildStage = targetStage > 2 ? 3 : 2;
+        t1L.setCurrentStage(s2ChildStage);
+        t1R.setCurrentStage(s2ChildStage);
+        userRepository.save(t1L);
+        userRepository.save(t1R);
+
+        user.setFixedPartnerLeft(t1L);
+        user.setFixedPartnerRight(t1R);
+
+        if (targetStage == 2) {
+            user.setCurrentLevel(targetLevel);
+            user.setCurrentStage(2);
+            userRepository.save(user);
+            return "Seeded Level " + targetLevel + " Stage 2: fixed partners t1L + t1R";
+        }
+
+        // ── Stage 3: all 6 in fixed-partner tree at stage 3+ ────────────────
+        int s3ChildStage = targetStage > 3 ? 4 : 3;
+        User p1L = makeFake("SdP1L", seed + 6,  targetLevel, s3ChildStage);
+        User p1R = makeFake("SdP1R", seed + 7,  targetLevel, s3ChildStage);
+        User p2L = makeFake("SdP2L", seed + 8,  targetLevel, s3ChildStage);
+        User p2R = makeFake("SdP2R", seed + 9,  targetLevel, s3ChildStage);
+
+        t1L.setCurrentStage(s3ChildStage);
+        t1R.setCurrentStage(s3ChildStage);
+        t1L.setFixedPartnerLeft(p1L);
+        t1L.setFixedPartnerRight(p1R);
+        t1R.setFixedPartnerLeft(p2L);
+        t1R.setFixedPartnerRight(p2R);
+        userRepository.save(t1L);
+        userRepository.save(t1R);
+
+        if (targetStage == 3) {
+            user.setCurrentLevel(targetLevel);
+            user.setCurrentStage(3);
+            userRepository.save(user);
+            return "Seeded Level " + targetLevel + " Stage 3: 6-person fixed-partner tree at stage 3";
+        }
+
+        // ── Stage 4: both direct fixed partners at stage 4 ──────────────────
+        for (User u : List.of(t1L, t1R, p1L, p1R, p2L, p2R)) {
+            u.setCurrentStage(4);
+            userRepository.save(u);
+        }
+        user.setCurrentLevel(targetLevel);
+        user.setCurrentStage(4);
+        userRepository.save(user);
+        return "Seeded Level " + targetLevel + " Stage 4: all partners at stage 4";
+    }
+
+    private User makeFake(String firstName, long seed, int level, int stage) {
+        String tag = String.format("%07d", seed % 10_000_000L);
+        return userRepository.save(User.builder()
+                .firstName(firstName)
+                .lastName("Seed" + tag)
+                .phone("+996SEED" + tag)
+                .passportNumber("SD" + tag)
+                .passwordHash("seed")
+                .referralCode("SEED" + tag)
+                .role(greenecomall.enums.Role.USER)
+                .accountStatus(greenecomall.enums.AccountStatus.ACTIVE)
+                .currentLevel(level)
+                .currentStage(stage)
+                .build());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // ADMIN: REPAIR
     // ─────────────────────────────────────────────────────────────────────────
 
