@@ -14,5 +14,6 @@ public record TreeNodeResponse(
         Integer position,
         Boolean isAccelerator,
         StageStatus stageStatus,
+        Boolean acceleratorAssisted,
         List<TreeNodeResponse> children
 ) {}

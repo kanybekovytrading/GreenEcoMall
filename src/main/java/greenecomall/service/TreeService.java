@@ -1637,6 +1637,7 @@ public class TreeService {
                                 .position(childPos.getPosition())
                                 .isAccelerator(accel)
                                 .stageStatus(childPos.getStageStatus())
+                                .acceleratorAssisted(accel ? null : Boolean.TRUE.equals(childPos.getUser().getAcceleratorAssisted()))
                                 .children(accel ? List.of() : buildNode(childPos.getUser(), level, stage, depth - 1).children())
                                 .build());
                     });
@@ -1647,6 +1648,7 @@ public class TreeService {
                 .name(user.getFirstName() + " " + user.getLastName())
                 .initials(initials(user))
                 .stageStatus(pos != null ? pos.getStageStatus() : StageStatus.WAITING)
+                .acceleratorAssisted(Boolean.TRUE.equals(user.getAcceleratorAssisted()))
                 .children(childNodes)
                 .build();
     }
@@ -1997,6 +1999,7 @@ public class TreeService {
                 .teamSize(countDownline(member))
                 .leftBranchSize(leftSize)
                 .rightBranchSize(rightSize)
+                .acceleratorAssisted(Boolean.TRUE.equals(member.getAcceleratorAssisted()))
                 .build();
     }
 

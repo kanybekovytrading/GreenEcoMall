@@ -19,5 +19,6 @@ public record MemberCardResponse(
         LocalDateTime joinedAt,
         int teamSize,        // сколько всего людей в его дереве (все тиры)
         int leftBranchSize,
-        int rightBranchSize
+        int rightBranchSize,
+        boolean acceleratorAssisted
 ) {}
