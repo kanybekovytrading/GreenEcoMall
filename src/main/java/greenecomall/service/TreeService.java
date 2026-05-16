@@ -372,9 +372,6 @@ public class TreeService {
             int nextLevel = level + 1;
             user.setCurrentLevel(nextLevel);
             user.setCurrentStage(1);
-            // Clear fixed partners — each level starts fresh
-            user.setFixedPartnerLeft(null);
-            user.setFixedPartnerRight(null);
             userRepository.save(user);
 
             log.info("User {} advanced to level {}", user.getId(), nextLevel);
