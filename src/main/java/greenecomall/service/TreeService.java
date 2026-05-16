@@ -505,20 +505,6 @@ public class TreeService {
                 .build());
     }
 
-    public User makeFakePartner(long seed, int level, int stage) {
-        return makeFake("Fake", seed, level, stage);
-    }
-
-    @Transactional
-    public void checkStage3ProgressPublic(User user, int level) {
-        checkStage3Progress(user, level);
-    }
-
-    @Transactional
-    public void checkStage4ProgressPublic(User user, int level) {
-        checkStage4Progress(user, level);
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
     // ADMIN: REPAIR
     // ─────────────────────────────────────────────────────────────────────────
