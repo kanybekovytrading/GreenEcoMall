@@ -1310,6 +1310,8 @@ public class TreeService {
             UUID parentId = pos.get().getParent().getId();
             User parent = userRepository.findById(parentId).orElse(null);
             if (parent == null) break;
+            // Parent already completed Stage 1 — cleanup won't propagate through them again
+            if (parent.getCurrentLevel() > level || parent.getCurrentStage() > 1) return false;
             root = parent;
         }
         return root.getCurrentLevel() == level && root.getCurrentStage() == 1;
