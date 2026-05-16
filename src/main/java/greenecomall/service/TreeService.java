@@ -1058,6 +1058,7 @@ public class TreeService {
         List<User> bfsOrdered = getStage2CandidatesInBfsOrder(level);
 
         List<User> candidates = bfsOrdered.stream()
+                .filter(u -> !u.getId().equals(user.getId())) // не ставить под самого себя
                 .sorted(Comparator.comparingInt((User u) -> {
                     int p = (u.getFixedPartnerLeft() != null ? 1 : 0)
                           + (u.getFixedPartnerRight() != null ? 1 : 0);
@@ -1718,7 +1719,12 @@ public class TreeService {
     }
 
     private TreeResponse buildFixedPartnersTree(User user, int level, int stage) {
-        // Don't show partners if user hasn't reached this stage yet
+        return buildFixedPartnersTree(user, level, stage, new HashSet<>());
+    }
+
+    private TreeResponse buildFixedPartnersTree(User user, int level, int stage, Set<UUID> visited) {
+        visited.add(user.getId());
+
         boolean userReachedStage = user.getCurrentLevel() > level
                 || (user.getCurrentLevel() == level && user.getCurrentStage() >= stage);
 
@@ -1728,7 +1734,7 @@ public class TreeService {
                 ? userRepository.findById(user.getFixedPartnerRight().getId()).orElse(null) : null;
 
         List<TreeNodeResponse> children = new ArrayList<>();
-        if (left != null && left.getCurrentStage() >= stage) {
+        if (left != null && !visited.contains(left.getId()) && left.getCurrentStage() >= stage) {
             children.add(TreeNodeResponse.builder()
                     .userId(left.getId())
                     .name(left.getFirstName() + " " + left.getLastName())
@@ -1736,10 +1742,10 @@ public class TreeService {
                     .position(1)
                     .isAccelerator(false)
                     .stageStatus(left.getCurrentStage() > stage ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
-                    .children(buildFixedPartnersTree(left, level, stage).root().children())
+                    .children(buildFixedPartnersTree(left, level, stage, new HashSet<>(visited)).root().children())
                     .build());
         }
-        if (right != null && right.getCurrentStage() >= stage) {
+        if (right != null && !visited.contains(right.getId()) && right.getCurrentStage() >= stage) {
             children.add(TreeNodeResponse.builder()
                     .userId(right.getId())
                     .name(right.getFirstName() + " " + right.getLastName())
@@ -1747,7 +1753,7 @@ public class TreeService {
                     .position(2)
                     .isAccelerator(false)
                     .stageStatus(right.getCurrentStage() > stage ? StageStatus.COMPLETED : StageStatus.IN_PROGRESS)
-                    .children(buildFixedPartnersTree(right, level, stage).root().children())
+                    .children(buildFixedPartnersTree(right, level, stage, new HashSet<>(visited)).root().children())
                     .build());
         }
 
