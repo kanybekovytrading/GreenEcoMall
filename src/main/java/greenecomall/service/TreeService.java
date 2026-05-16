@@ -778,22 +778,48 @@ public class TreeService {
      */
     private void fillStage2UnderInviter(User user, int level) {
         if (user.getRole() == greenecomall.enums.Role.ADMIN) return;
+
+        // 1. Walk up inviter's chain (via Stage-1 BFS tree) for a direct Stage-2 ancestor
         User ancestor = findFirstStage2Ancestor(user, level);
+
+        // 2. If no direct ancestor, walk up the fixed-partner tree from the inviter.
+        //    This handles the case where the inviter is already at Stage 3+ (both slots filled):
+        //    we move to the inviter's host, then the host's host, etc., and find the
+        //    weakest Stage-2 slot within that subtree.  This keeps placements inside the
+        //    correct organisational branch rather than jumping to an unrelated branch.
+        if (ancestor == null) {
+            User inviter = user.getInviter();
+            if (inviter != null) {
+                User host = userRepository.findStage2HostOf(inviter).orElse(null);
+                while (host != null) {
+                    if (host.getRole() != greenecomall.enums.Role.ADMIN) {
+                        User t = findWeakestStage2Target(host, level);
+                        if (t != null) {
+                            ancestor = host;
+                            break;
+                        }
+                    }
+                    host = userRepository.findStage2HostOf(host).orElse(null);
+                }
+            }
+        }
 
         if (ancestor == null) {
             placeUnderFastStartGraduate(user, level);
             return;
         }
 
-        // BFS the Stage 2 team to find the weakest link:
-        // priority 1 — has exactly 1 partner (needs just 1 more); priority 2 — has 0 partners.
-        // Within each priority, BFS left-to-right order is preserved naturally.
+        // BFS the Stage-2 team rooted at ancestor to find the weakest slot.
         User target = findWeakestStage2Target(ancestor, level);
         if (target == null) {
             placeUnderFastStartGraduate(user, level);
             return;
         }
 
+        placeAsFixedPartner(user, target, level);
+    }
+
+    private void placeAsFixedPartner(User user, User target, int level) {
         User locked = userRepository.findByIdForUpdate(target.getId())
                 .orElseThrow(() -> new IllegalStateException("Stage2 target not found: " + target.getId()));
 
@@ -835,7 +861,8 @@ public class TreeService {
             User fresh = userRepository.findById(cur.getId()).orElse(null);
             if (fresh == null) continue;
 
-            if (fresh.getCurrentLevel() == level && fresh.getCurrentStage() == 2) {
+            if (fresh.getCurrentLevel() == level && fresh.getCurrentStage() == 2
+                    && fresh.getRole() != greenecomall.enums.Role.ADMIN) {
                 int partners = (fresh.getFixedPartnerLeft()  != null ? 1 : 0)
                              + (fresh.getFixedPartnerRight() != null ? 1 : 0);
                 if      (partners == 1) onePartner.add(fresh);
@@ -918,7 +945,8 @@ public class TreeService {
             User fresh = userRepository.findById(parent.getId()).orElse(null);
             if (fresh == null) break;
 
-            if (fresh.getCurrentLevel() == level && fresh.getCurrentStage() == 2) {
+            if (fresh.getRole() != greenecomall.enums.Role.ADMIN
+                    && fresh.getCurrentLevel() == level && fresh.getCurrentStage() == 2) {
                 int filled = (fresh.getFixedPartnerLeft()  != null ? 1 : 0)
                            + (fresh.getFixedPartnerRight() != null ? 1 : 0);
                 if (filled < 2) {
