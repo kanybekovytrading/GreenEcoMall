@@ -1506,6 +1506,7 @@ public class TreeService {
                 .progress(TreeResponse.TreeProgress.builder().filled(filled).total(total).build())
                 .accelerator(TreeResponse.AcceleratorInfo.builder().active(hasAccelerator).build())
                 .fastStartNumber(isFastStartTree ? user.getFastStartNumber() : null)
+                .branches(isFastStartTree ? null : buildBranchStats(user, level))
                 .build();
     }
 
@@ -1533,6 +1534,7 @@ public class TreeService {
                     .stageStatus(StageStatus.WAITING)
                     .progress(TreeResponse.TreeProgress.builder().filled(0).total(0).build())
                     .accelerator(TreeResponse.AcceleratorInfo.builder().active(false).build())
+                    .branches(buildBranchStats(user, level))
                     .build();
         }
 
@@ -1552,6 +1554,7 @@ public class TreeService {
                 .stageStatus(rootStatus)
                 .progress(TreeResponse.TreeProgress.builder().filled(counts[0]).total(counts[1]).build())
                 .accelerator(TreeResponse.AcceleratorInfo.builder().active(false).build())
+                .branches(buildBranchStats(user, level))
                 .build();
     }
 
@@ -1650,6 +1653,7 @@ public class TreeService {
                 .stageStatus(status)
                 .progress(TreeResponse.TreeProgress.builder().filled(filled).total(2).build())
                 .accelerator(TreeResponse.AcceleratorInfo.builder().active(false).build())
+                .branches(buildBranchStats(user, level))
                 .build();
     }
 
@@ -2077,6 +2081,16 @@ public class TreeService {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
+    private TreeResponse.BranchStats buildBranchStats(User user, int level) {
+        List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
+        int leftSize  = (int) buildBranchInfo(user, level, 1, tier1).members().stream().count();
+        int rightSize = (int) buildBranchInfo(user, level, 2, tier1).members().stream().count();
+        return TreeResponse.BranchStats.builder()
+                .left(TreeResponse.BranchSide.builder().size(leftSize).build())
+                .right(TreeResponse.BranchSide.builder().size(rightSize).build())
+                .build();
+    }
+
     public BranchStatsResponse getBranchStats(User user) {
         int level = user.getCurrentLevel();
         List<TreePosition> tier1 = treePositionRepo.findByParentAndLevelAndStage(user, level, 1);
