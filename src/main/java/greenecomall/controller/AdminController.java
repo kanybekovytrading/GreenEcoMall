@@ -332,21 +332,21 @@ public class AdminController {
     // ── Тестовые пользователи ────────────────────────────────────────────────
 
     @Operation(
-            summary = "Создать тестовых пользователей (быстрый тест дерева)",
+            summary = "Создать тестовых пользователей",
             description = """
-                    Создаёт и сразу активирует ДВУХ пользователей на каждую запись без OTP и без оплаты.
-                    Телефон, пароль и паспорт генерируются автоматически.
-                    firstName/lastName необязательны — если не указаны, генерируются автоматически.
+                    Создаёт и сразу активирует пользователей без OTP и без оплаты.
+                    Телефон и паспорт генерируются автоматически.
+                    `count` — сколько создать под этим реф-кодом (по умолчанию 6).
+                    firstName/lastName необязательны.
 
                     Пример тела запроса:
                     ```json
                     [
-                      {"inviterCode": "AZAMAT123"},
-                      {"inviterCode": "ALIYA_REF"}
+                      {"inviterCode": "AZAMAT123", "count": 6},
+                      {"inviterCode": "ALIYA_REF", "count": 3}
                     ]
                     ```
-                    Каждая запись → 2 созданных пользователя.
-                    Ответ: имя, userId, referralCode — используй referralCode следующих в цепочке.
+                    Ответ: имя, userId, referralCode для каждого созданного пользователя.
                     """)
     @PostMapping("/test/create-users")
     public ResponseEntity<ApiResponse<List<Map<String, String>>>> createTestUsers(
@@ -357,15 +357,14 @@ public class AdminController {
         int counter = 0;
 
         for (TestUserEntry e : entries) {
-            // Создаём 2 пользователя под инвайтером (tier 1)
-            List<greenecomall.entity.User> tier1 = new ArrayList<>();
-            for (int pair = 1; pair <= 2; pair++) {
+            int count = (e.count() != null && e.count() > 0) ? e.count() : 6;
+            for (int i = 1; i <= count; i++) {
                 long idx = base + counter++;
                 String phone = "+99670" + String.format("%07d", idx);
                 String firstName = (e.firstName() != null && !e.firstName().isBlank())
-                        ? e.firstName() + (pair == 2 ? "2" : "") : "Test" + idx;
+                        ? e.firstName() + i : "Test" + idx;
                 String lastName  = (e.lastName()  != null && !e.lastName().isBlank())
-                        ? e.lastName()  + (pair == 2 ? "2" : "") : "User" + idx;
+                        ? e.lastName() : "User" + idx;
 
                 greenecomall.dto.request.RegisterRequest req = new greenecomall.dto.request.RegisterRequest(
                         firstName, lastName, phone, "TEST" + idx, "test123456",
@@ -375,45 +374,19 @@ public class AdminController {
                 paymentService.activateUserById(reg.userId());
 
                 greenecomall.entity.User created = userRepository.findById(reg.userId()).orElseThrow();
-                tier1.add(created);
                 Map<String, String> row = new LinkedHashMap<>();
-                row.put("name", firstName + " " + lastName);
+                row.put("name", created.getFirstName() + " " + created.getLastName());
                 row.put("userId", reg.userId().toString());
                 row.put("phone", phone);
                 row.put("referralCode", created.getReferralCode());
                 results.add(row);
-            }
-
-            // Создаём по 2 пользователя под каждым из tier-1 (итого +4, всего 6)
-            for (greenecomall.entity.User parent : tier1) {
-                for (int sub = 1; sub <= 2; sub++) {
-                    long idx = base + counter++;
-                    String phone = "+99670" + String.format("%07d", idx);
-                    String firstName = parent.getFirstName() + "Sub" + sub;
-                    String lastName  = parent.getLastName();
-
-                    greenecomall.dto.request.RegisterRequest req = new greenecomall.dto.request.RegisterRequest(
-                            firstName, lastName, phone, "TEST" + idx, "test123456",
-                            parent.getReferralCode(), null, "testword");
-
-                    greenecomall.dto.response.RegisterResponse reg = authService.registerByAdmin(req);
-                    paymentService.activateUserById(reg.userId());
-
-                    greenecomall.entity.User created = userRepository.findById(reg.userId()).orElseThrow();
-                    Map<String, String> row = new LinkedHashMap<>();
-                    row.put("name", firstName + " " + lastName);
-                    row.put("userId", reg.userId().toString());
-                    row.put("phone", phone);
-                    row.put("referralCode", created.getReferralCode());
-                    results.add(row);
-                }
             }
         }
 
         return ResponseEntity.ok(ApiResponse.ok(results));
     }
 
-    public record TestUserEntry(String firstName, String lastName, String inviterCode) {}
+    public record TestUserEntry(String firstName, String lastName, String inviterCode, Integer count) {}
 
     @Operation(
             summary = "Создать тестовых пользователей Уровня 0 (Fast Start)",
