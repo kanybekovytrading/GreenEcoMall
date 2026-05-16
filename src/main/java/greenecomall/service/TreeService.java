@@ -376,9 +376,6 @@ public class TreeService {
 
             log.info("User {} advanced to level {}", user.getId(), nextLevel);
 
-            // Re-seed Stage-1 tree for next level with existing fixed partners
-            reEnterNextLevel(user, nextLevel);
-
             notificationService.send(user, NotificationType.LEVEL_UP,
                     "Новый уровень!",
                     "Поздравляем! Вы перешли на Уровень " + nextLevel + ".");
