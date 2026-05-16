@@ -1059,6 +1059,7 @@ public class TreeService {
 
         List<User> candidates = bfsOrdered.stream()
                 .filter(u -> !u.getId().equals(user.getId())) // не ставить под самого себя
+                .filter(u -> u.getRole() != greenecomall.enums.Role.ADMIN)
                 .sorted(Comparator.comparingInt((User u) -> {
                     int p = (u.getFixedPartnerLeft() != null ? 1 : 0)
                           + (u.getFixedPartnerRight() != null ? 1 : 0);
@@ -1191,6 +1192,7 @@ public class TreeService {
         // accelerators inside already-completed matrices whose children are still at Stage 1.
         return userRepository.findAll().stream()
                 .filter(u -> !u.getId().equals(placer.getId()))
+                .filter(u -> u.getRole() != greenecomall.enums.Role.ADMIN)
                 .filter(u -> u.getCurrentLevel() == level && u.getCurrentStage() == 1
                           && u.getAccountStatus() == greenecomall.enums.AccountStatus.ACTIVE
                           && u.getRegistrationPlan() != RegistrationPlan.FAST_START)
@@ -1220,6 +1222,7 @@ public class TreeService {
 
         return userRepository.findAll().stream()
                 .filter(u -> !u.getId().equals(placer.getId()))
+                .filter(u -> u.getRole() != greenecomall.enums.Role.ADMIN)
                 .filter(u -> u.getCurrentLevel() == level && u.getCurrentStage() == 1
                           && u.getAccountStatus() == greenecomall.enums.AccountStatus.ACTIVE
                           && u.getRegistrationPlan() != RegistrationPlan.FAST_START)
